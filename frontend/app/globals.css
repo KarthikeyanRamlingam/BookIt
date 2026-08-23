@@ -1,0 +1,167 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ==== Color Palette (CSS Variables) ==== */
+:root {
+  /* Brand */
+  --color-primary: #2563EB;   /* brand blue */
+  --color-primary-dark: #4338CA; /* deeper blue */
+  --color-bg: #0F172A;        /* deep navy */
+  --color-surface: #F8FAFC;   /* soft white */
+  --color-success: #10B981;   /* emerald green */
+  --color-warning: #F59E0B;   /* amber */
+  --color-error: #EF4444;     /* red */
+
+  /* Text */
+  --text-primary: #F8FAFC;    /* soft white on dark bg */
+  --text-muted: #94A3B8;      /* gray-400 */
+  --text-brand: #2563EB;      /* same as primary for links */
+}
+
+/* Dark mode fallback – keep deep navy as background */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* keep same values – deep navy works for dark */
+  }
+}
+
+/* ==== Global Styles ==== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--color-bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ==== Utility Classes ==== */
+/* Glassmorphism container */
+.glass {
+  background: rgba(15,23,42,0.85); /* navy with opacity */
+  backdrop-filter: blur(8px);
+  border-radius: 1rem;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Card component */
+.card {
+  background: var(--color-surface);
+  border-radius: 0.75rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+/* Primary button */
+.btn-primary {
+  background-color: var(--color-primary);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+.btn-primary:hover {
+  background-color: var(--color-primary-dark);
+}
+.btn-primary:active {
+  transform: scale(0.97);
+}
+
+/* Secondary button (border only) */
+.btn-secondary {
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
+  background: transparent;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.btn-secondary:hover {
+  background-color: rgba(37,99,235,0.1);
+}
+
+/* Status badge */
+.status-badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.status-success { background-color: rgba(16,185,129,0.15); color: var(--color-success); }
+.status-warning { background-color: rgba(245,158,11,0.15); color: var(--color-warning); }
+.status-error   { background-color: rgba(239,68,68,0.15); color: var(--color-error); }
+
+/* Fade‑in animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-in { animation: fadeIn 0.2s ease forwards; }
+
+/* Pulse for status changes */
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+.pulse { animation: pulse 1s ease-in-out infinite; }
+
+/* Simple transition utility */
+.transition-medium {
+  transition: all 0.2s ease;
+}
+
+/* Input styling with floating label */
+.input-group {
+  position: relative;
+  margin-top: 1.5rem;
+}
+.input-group input,
+.input-group textarea {
+  width: 100%;
+  padding: 0.75rem 0.5rem;
+  border: 1px solid #94A3B8;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+.input-group label {
+  position: absolute;
+  left: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: all 0.2s ease;
+}
+.input-group input:focus + label,
+.input-group textarea:focus + label,
+.input-group input:not(:placeholder-shown) + label,
+.input-group textarea:not(:placeholder-shown) + label {
+  top: -0.5rem;
+  left: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  background: var(--color-bg);
+  padding: 0 0.25rem;
+}
+
+/* Existing Tailwind imports – keep for utilities not overridden */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Service" ADD COLUMN     "tokenFee" DECIMAL(10,2) NOT NULL DEFAULT 50.00;

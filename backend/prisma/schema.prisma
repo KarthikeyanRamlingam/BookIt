@@ -1,0 +1,435 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  STAFF
+  ADMIN // business owner / manager
+  PLATFORM_ADMIN
+}
+
+enum BusinessStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+  CHECK_IN_PENDING // user scanned business QR, awaiting business confirmation
+  CHECKED_IN       // business confirmed arrival
+  ATTENDED         // service has been delivered
+}
+
+enum CheckInStatus {
+  PENDING    // initiated by user, awaiting business confirmation
+  CONFIRMED  // business confirmed
+  REJECTED   // business rejected
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+enum ReminderType {
+  ONE_HOUR
+  THIRTY_MINUTES
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  phone         String?  @unique
+  passwordHash  String
+  name          String
+  role          Role     @default(CUSTOMER)
+  loyaltyPoints Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // If role = ADMIN, they own a business
+  ownedBusiness Business? @relation("BusinessOwner")
+
+  // If role = STAFF, they belong to a business
+  staffProfile StaffProfile?
+
+  appointments      Appointment[]        @relation("CustomerAppointments")
+  reviews           Review[]
+  waitlistEntries   WaitlistEntry[]
+  referralsSent     Referral[]           @relation("ReferralSender")
+  referralReceived  Referral?            @relation("ReferralReceiver")
+  couponRedemptions CouponRedemption[]
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+  checkIns          CheckIn[]            @relation("UserCheckIns")
+  verifiedCheckIns  CheckIn[]            @relation("VerifiedCheckIns")
+
+  @@index([role])
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  icon      String?
+  createdAt DateTime @default(now())
+
+  businesses Business[]
+}
+
+model Business {
+  id          String         @id @default(uuid())
+  name        String
+  slug        String         @unique
+  description String?
+  address     String?
+  phone       String?
+  city        String?
+  state       String?
+  country     String?
+  postalCode  String?
+  timezone    String         @default("Asia/Kolkata")
+  logoUrl     String?
+  latitude    Float?
+  longitude   Float?
+  status      BusinessStatus @default(PENDING_VERIFICATION)
+  createdAt   DateTime       @default(now())
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  ownerId String @unique
+  owner   User   @relation("BusinessOwner", fields: [ownerId], references: [id])
+
+  staff            StaffProfile[]
+  services         Service[]
+  appointments     Appointment[]
+  reviews          Review[]
+  coupons          Coupon[]
+  waitlist         WaitlistEntry[]
+  businessHours    BusinessHours[]
+  settings         BusinessSettings?
+  checkInSessions  CheckInSession[]
+  checkIns         CheckIn[]
+  tokenSequences   BusinessTokenSequence[]
+
+  @@index([categoryId])
+  @@index([status])
+}
+
+// Recurring weekly working hours per business (used to generate available slots)
+model BusinessHours {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  dayOfWeek  Int // 0 = Sunday ... 6 = Saturday
+  startTime  String // "09:00"
+  endTime    String // "18:00"
+
+  @@unique([businessId, dayOfWeek])
+}
+
+// Per-business configuration for check-in behavior and no-show automation
+model BusinessSettings {
+  id                       String   @id @default(uuid())
+  businessId               String   @unique
+  business                 Business @relation(fields: [businessId], references: [id])
+  checkInBeforeMinutes     Int      @default(30)  // how many minutes before appt check-in opens
+  gracePeriodMinutes       Int      @default(15)  // how many minutes after appt time before auto no-show
+  autoNoShow               Boolean  @default(true)
+  locationVerificationEnabled Boolean @default(false)
+  breakfastStart           String?
+  breakfastEnd             String?
+  lunchStart               String?
+  lunchEnd                 String?
+  dinnerStart              String?
+  dinnerEnd                String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+}
+
+// Dynamic short-lived QR session displayed by business. Users scan this to initiate check-in.
+model CheckInSession {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  token      String   @unique @default(uuid())
+  expiresAt  DateTime
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  checkIns   CheckIn[]
+
+  @@index([businessId, active])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// Records of check-in attempts initiated by users
+model CheckIn {
+  id              String        @id @default(uuid())
+  bookingId       String        @unique  // one check-in record per booking
+  booking         Appointment   @relation(fields: [bookingId], references: [id])
+  userId          String
+  user            User          @relation("UserCheckIns", fields: [userId], references: [id])
+  businessId      String
+  business        Business      @relation(fields: [businessId], references: [id])
+  sessionId       String?
+  session         CheckInSession? @relation(fields: [sessionId], references: [id])
+  status          CheckInStatus @default(PENDING)
+  method          String        @default("QR_SCAN") // QR_SCAN | MANUAL
+  initiatedAt     DateTime      @default(now())
+  verifiedAt      DateTime?
+  verifiedById    String?
+  verifiedBy      User?         @relation("VerifiedCheckIns", fields: [verifiedById], references: [id])
+  rejectionReason String?
+  createdAt       DateTime      @default(now())
+
+  @@index([businessId, status])
+  @@index([userId])
+}
+
+model StaffProfile {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id])
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  title      String?
+  createdAt  DateTime @default(now())
+
+  slots        Slot[]
+  appointments Appointment[] @relation("StaffAppointments")
+}
+
+model Service {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  name        String
+  description String?
+  durationMin Int
+  price       Decimal  @db.Decimal(10, 2)
+  tokenFee    Decimal  @default(50.00) @db.Decimal(10, 2)
+  active      Boolean  @default(true)
+
+  appointments Appointment[]
+  slots        Slot[]
+  waitlist     WaitlistEntry[]
+}
+
+// A bookable time slot for a staff member + service.
+// Generated ahead of time from BusinessHours, or created ad-hoc.
+model Slot {
+  id         String   @id @default(uuid())
+  staffId    String
+  staff      StaffProfile @relation(fields: [staffId], references: [id])
+  serviceId  String
+  service    Service  @relation(fields: [serviceId], references: [id])
+  startTime  DateTime
+  endTime    DateTime
+  isBooked   Boolean  @default(false)
+
+  appointment Appointment?
+
+  @@unique([staffId, startTime]) // prevents double-booking the same staff at the same start time
+  @@index([startTime])
+}
+
+model Appointment {
+  id         String            @id @default(uuid())
+  customerId String
+  customer   User              @relation("CustomerAppointments", fields: [customerId], references: [id])
+  businessId String
+  business   Business          @relation(fields: [businessId], references: [id])
+  staffId    String
+  staff      StaffProfile      @relation("StaffAppointments", fields: [staffId], references: [id])
+  serviceId  String
+  service    Service           @relation(fields: [serviceId], references: [id])
+  slotId     String            @unique
+  slot       Slot              @relation(fields: [slotId], references: [id])
+  status     AppointmentStatus @default(PENDING)
+  tokenDate  String?
+  tokenNumber Int?
+  notes      String?
+  qrCode     String            @unique @default(uuid()) // used for check-in
+  couponId   String?           // coupon applied at booking
+  coupon     Coupon?           @relation(fields: [couponId], references: [id])
+
+  checkedInAt DateTime?
+  attendedAt  DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  payment       Payment?
+  review        Review?
+  notifications Notification[]
+  reminders      AppointmentReminder[]
+  checkIn       CheckIn?
+
+  @@index([status])
+  @@index([businessId, status])
+  @@index([customerId])
+  @@unique([businessId, tokenDate, tokenNumber])
+}
+
+model BusinessTokenSequence {
+  id          String   @id @default(uuid())
+  businessId  String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tokenDate   String
+  nextNumber  Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([businessId, tokenDate])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  appointmentId String        @unique
+  appointment   Appointment   @relation(fields: [appointmentId], references: [id])
+  amount        Decimal       @db.Decimal(10, 2)
+  currency      String        @default("INR")
+  provider      String // "stripe" | "razorpay"
+  providerRefId String?
+  status        PaymentStatus @default(PENDING)
+  refundAmount  Decimal?      @db.Decimal(10, 2)
+  refundStatus  String?       @default("NONE") // "NONE" | "REFUNDED_90_PERCENT" | "RETAINED_NO_SHOW"
+  refundedAt    DateTime?
+  createdAt     DateTime      @default(now())
+}
+
+model Review {
+  id            String      @id @default(uuid())
+  appointmentId String      @unique
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+  customerId    String
+  customer      User        @relation(fields: [customerId], references: [id])
+  businessId    String
+  business      Business    @relation(fields: [businessId], references: [id])
+  rating        Int // 1-5
+  comment       String?
+  createdAt     DateTime    @default(now())
+}
+
+model WaitlistEntry {
+  id            String   @id @default(uuid())
+  customerId    String
+  customer      User     @relation(fields: [customerId], references: [id])
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id])
+  serviceId     String
+  service       Service  @relation(fields: [serviceId], references: [id])
+  preferredDate DateTime
+  notified      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+}
+
+model Coupon {
+  id            String   @id @default(uuid())
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id])
+  code          String   @unique
+  discountPct   Int
+  maxRedemptions Int?
+  expiresAt     DateTime?
+  active        Boolean  @default(true)
+
+  redemptions  CouponRedemption[]
+  appointments Appointment[]
+}
+
+model CouponRedemption {
+  id         String   @id @default(uuid())
+  couponId   String
+  coupon     Coupon   @relation(fields: [couponId], references: [id])
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  redeemedAt DateTime @default(now())
+
+  @@unique([couponId, userId])
+}
+
+model Referral {
+  id           String   @id @default(uuid())
+  senderId     String
+  sender       User     @relation("ReferralSender", fields: [senderId], references: [id])
+  receiverId   String?  @unique
+  receiver     User?    @relation("ReferralReceiver", fields: [receiverId], references: [id])
+  code         String   @unique
+  rewardPoints Int      @default(50)
+  redeemed     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+model Notification {
+  id            String              @id @default(uuid())
+  userId        String
+  user          User                @relation(fields: [userId], references: [id])
+  appointmentId String?
+  appointment   Appointment?        @relation(fields: [appointmentId], references: [id])
+  channel       NotificationChannel
+  status        NotificationStatus  @default(PENDING)
+  message       String
+  sentAt        DateTime?
+  createdAt     DateTime            @default(now())
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model AppointmentReminder {
+  id            String             @id @default(uuid())
+  appointmentId String
+  appointment   Appointment        @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  type          ReminderType
+  scheduledAt   DateTime
+  status        NotificationStatus @default(PENDING)
+  attempts      Int                @default(0)
+  sentAt        DateTime?
+  lastError     String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@unique([appointmentId, type])
+  @@index([status, scheduledAt])
+}

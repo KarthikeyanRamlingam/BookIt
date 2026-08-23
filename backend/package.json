@@ -1,0 +1,49 @@
+{
+  "name": "appointment-platform-backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "nodemon --watch src --exec ts-node src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "seed": "ts-node prisma/seed.ts",
+    "rename:cafe-to-doctor": "ts-node prisma/rename-cafe-to-doctor.ts",
+    "reminders": "ts-node src/jobs/sendReminders.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "@types/web-push": "^3.6.4",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-async-errors": "^3.1.1",
+    "google-auth-library": "^11.0.2",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "nodemailer": "^6.9.14",
+    "qrcode": "^1.5.4",
+    "stripe": "^16.8.0",
+    "twilio": "^5.3.0",
+    "web-push": "^3.6.7",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^20.14.15",
+    "@types/nodemailer": "^6.4.15",
+    "@types/qrcode": "^1.5.5",
+    "nodemon": "^3.1.4",
+    "prisma": "^5.20.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}
