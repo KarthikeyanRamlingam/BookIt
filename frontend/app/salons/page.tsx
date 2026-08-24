@@ -245,8 +245,13 @@ export default function SalonsPage() {
                 </div>
 
                 {b.address && (
-                  <p className="mt-1 text-xs text-gray-500 flex items-center gap-1">
-                    <span>📍</span> {b.address}
+                  <p className="mt-1 text-xs text-gray-400 flex items-center gap-1">
+                    <span>📍</span>
+                    <span className="truncate">
+                      {b.address.startsWith("http") || b.address.includes("maps.google")
+                        ? "Pinned Location (Google Maps)"
+                        : b.address}
+                    </span>
                   </p>
                 )}
 

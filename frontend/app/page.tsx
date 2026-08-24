@@ -297,7 +297,16 @@ export default function HomePage() {
                   <h3 className="text-lg font-bold text-white group-hover:text-blue-400 transition-colors">
                     {b.name}
                   </h3>
-                  {b.address && <p className="mt-1 text-sm text-slate-400">📍 {b.address}</p>}
+                  {b.address && (
+                    <p className="mt-1 text-sm text-slate-400 flex items-center gap-1">
+                      <span>📍</span>
+                      <span className="truncate max-w-[280px]">
+                        {b.address.startsWith("http") || b.address.includes("maps.google")
+                          ? "Pinned Location (Google Maps)"
+                          : b.address}
+                      </span>
+                    </p>
+                  )}
                   {b.description && <p className="mt-2 text-sm text-slate-300 leading-relaxed">{b.description}</p>}
                 </div>
                 {b.distanceKm !== null && (

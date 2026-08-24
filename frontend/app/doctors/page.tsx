@@ -193,7 +193,16 @@ export default function DoctorsPage() {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-lg font-semibold text-gray-900">{business.name}</div>
-                  {business.address && <div className="mt-1 text-sm text-gray-500">{business.address}</div>}
+                  {business.address && (
+                    <div className="mt-1 text-sm text-gray-400 flex items-center gap-1">
+                      <span>📍</span>
+                      <span className="truncate">
+                        {business.address.startsWith("http") || business.address.includes("maps.google")
+                          ? "Pinned Location (Google Maps)"
+                          : business.address}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 {business.distanceKm !== null && (
                   <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600">
