@@ -185,8 +185,34 @@ export default function AdminDashboardPage() {
               </div>
 
               <div className="mt-5 grid gap-3 border-y border-slate-800 py-4 text-sm sm:grid-cols-2">
-                <div><p className="text-xs uppercase tracking-wider text-slate-500">Owner</p><p className="mt-1 font-semibold text-slate-200">{application.owner.name}</p><p className="text-slate-400">{application.owner.email}</p></div>
-                <div><p className="text-xs uppercase tracking-wider text-slate-500">Location</p><p className="mt-1 text-slate-200">{[application.address, application.city, application.state].filter(Boolean).join(", ") || "Not provided"}</p><p className="text-slate-500">{application.timezone}</p></div>
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-slate-500">Owner</p>
+                  <p className="mt-1 font-semibold text-slate-200">{application.owner.name}</p>
+                  <p className="text-slate-400">{application.owner.email}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-slate-500">Location</p>
+                  {application.address?.startsWith("http") || application.address?.includes("maps") ? (
+                    <div className="mt-1 space-y-1">
+                      <p className="font-semibold text-slate-200">
+                        {[application.city, application.state, application.country].filter(Boolean).join(", ") || "Pinned Location"}
+                      </p>
+                      <a
+                        href={application.address}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-400 hover:text-blue-300 underline"
+                      >
+                        <span>📍</span> View on Google Maps
+                      </a>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-slate-200 break-words">
+                      {[application.address, application.city, application.state].filter(Boolean).join(", ") || "Not provided"}
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-500 mt-1">{application.timezone}</p>
+                </div>
               </div>
 
               {application.description && <p className="mt-4 line-clamp-3 text-sm leading-6 text-slate-400">{application.description}</p>}
