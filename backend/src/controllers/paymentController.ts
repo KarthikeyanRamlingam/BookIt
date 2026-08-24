@@ -35,23 +35,40 @@ export async function createCheckoutSession(req: Request, res: Response) {
     );
   }
 
-  const session = await stripe.checkout.sessions.create({
-    mode: "payment",
-    payment_method_types: ["card"],
-    line_items: [
-      {
-        price_data: {
-          currency: "inr",
-          product_data: { name: `Token Booking Fee - ${appointment.service.name}` },
-          unit_amount: amountInSubunits,
+  const origin = (req.headers.origin as string) || (req.headers.referer as string);
+  let frontendUrl = process.env.FRONTEND_URL || "https://book-it-kappa-virid.vercel.app";
+  if (origin) {
+    try {
+      frontendUrl = new URL(origin).origin;
+    } catch {
+      // ignore
+    }
+  }
+  frontendUrl = frontendUrl.replace(/\/+$/, "");
+
+  let session: Stripe.Checkout.Session;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "inr",
+            product_data: { name: `Token Booking Fee - ${appointment.service.name}` },
+            unit_amount: amountInSubunits,
+          },
+          quantity: 1,
         },
-        quantity: 1,
-      },
-    ],
-    metadata: { appointmentId: appointment.id },
-    success_url: `${process.env.FRONTEND_URL}/payment/success?appointmentId=${appointment.id}&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${process.env.FRONTEND_URL}/payment/cancel?appointmentId=${appointment.id}`,
-  });
+      ],
+      metadata: { appointmentId: appointment.id },
+      success_url: `${frontendUrl}/payment/success?appointmentId=${appointment.id}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${frontendUrl}/payment/cancel?appointmentId=${appointment.id}`,
+    });
+  } catch (stripeErr: any) {
+    console.error("Stripe Checkout Error:", stripeErr);
+    throw new ApiError(500, stripeErr?.message || "Failed to create Stripe payment session.");
+  }
 
   // Upsert so re-clicking "Pay Now" (e.g. after abandoning checkout) reuses
   // the Payment row instead of erroring, and the webhook can always find it
