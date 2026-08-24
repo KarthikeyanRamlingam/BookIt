@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../config/db";
+import { ApiError } from "../middleware/errorHandler";
 
 const joinSchema = z.object({
   businessId: z.string().uuid(),
@@ -10,6 +11,16 @@ const joinSchema = z.object({
 
 export async function joinWaitlist(req: Request, res: Response) {
   const data = joinSchema.parse(req.body);
+
+  const service = await prisma.service.findFirst({
+    where: { id: data.serviceId, businessId: data.businessId, active: true },
+  });
+  if (!service) throw new ApiError(400, "Service does not belong to this business or is inactive");
+
+  const existing = await prisma.waitlistEntry.findFirst({
+    where: { customerId: req.user!.userId, businessId: data.businessId, serviceId: data.serviceId, preferredDate: new Date(data.preferredDate) },
+  });
+  if (existing) throw new ApiError(409, "You are already on this waitlist");
 
   const entry = await prisma.waitlistEntry.create({
     data: {

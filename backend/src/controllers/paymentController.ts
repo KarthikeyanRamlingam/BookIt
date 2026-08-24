@@ -78,10 +78,14 @@ export async function verifyPayment(req: Request, res: Response) {
 
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
-    include: { service: true, payment: true, customer: true },
+    include: { service: true, payment: true, customer: true, business: { select: { ownerId: true } } },
   });
 
   if (!appointment) throw new ApiError(404, "Appointment not found");
+  const canVerifyPayment =
+    appointment.customerId === req.user!.userId ||
+    (req.user!.role === "ADMIN" && appointment.business.ownerId === req.user!.userId);
+  if (!canVerifyPayment) throw new ApiError(403, "Not authorized to verify this payment");
 
   // If already marked PAID, return success immediately
   if (appointment.payment?.status === "PAID") {
@@ -105,7 +109,7 @@ export async function verifyPayment(req: Request, res: Response) {
   }
 
   // 2. If Stripe confirmed or customer was redirected from successful checkout
-  if (isVerifiedPaid || sessionId || req.query.dev === "true" || process.env.NODE_ENV !== "production") {
+  if (isVerifiedPaid) {
     const payment = await prisma.payment.upsert({
       where: { appointmentId: appointment.id },
       update: {
@@ -157,9 +161,16 @@ export async function handleStripeWebhook(req: Request, res: Response) {
     const appointmentId = session.metadata?.appointmentId;
 
     if (appointmentId) {
-      const payment = await prisma.payment.update({
+      const payment = await prisma.payment.upsert({
         where: { appointmentId },
-        data: { status: "PAID" },
+        update: { status: "PAID", providerRefId: session.id },
+        create: {
+          appointmentId,
+          amount: Number(session.amount_total || 0) / 100,
+          provider: "stripe",
+          providerRefId: session.id,
+          status: "PAID",
+        },
         include: { appointment: { include: { customer: true, service: true } } },
       });
 
@@ -177,6 +188,16 @@ export async function handleStripeWebhook(req: Request, res: Response) {
 }
 
 export async function getPaymentStatus(req: Request, res: Response) {
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: req.params.appointmentId },
+    select: { customerId: true, business: { select: { ownerId: true } } },
+  });
+  if (!appointment) throw new ApiError(404, "Appointment not found");
+  const canViewPayment =
+    appointment.customerId === req.user!.userId ||
+    (req.user!.role === "ADMIN" && appointment.business.ownerId === req.user!.userId);
+  if (!canViewPayment) throw new ApiError(403, "Not authorized to view this payment");
+
   const payment = await prisma.payment.findUnique({ where: { appointmentId: req.params.appointmentId } });
   res.json(payment ?? { status: "UNPAID" });
 }

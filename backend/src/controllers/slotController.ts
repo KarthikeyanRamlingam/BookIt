@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { BusinessHours } from "@prisma/client";
+import { DateTime } from "luxon";
 import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
 
@@ -46,24 +47,24 @@ export async function generateSlots(req: Request, res: Response) {
   const hoursByDay = new Map<number, BusinessHours>(hours.map((h) => [h.dayOfWeek, h]));
   const slotsToCreate: { staffId: string; serviceId: string; startTime: Date; endTime: Date }[] = [];
 
-  const now = new Date();
+  const now = DateTime.now();
+  const businessNow = now.setZone(business.timezone);
+  if (!businessNow.isValid) throw new ApiError(400, `Invalid business timezone: ${business.timezone}`);
+
   for (let d = 0; d < daysAhead; d++) {
-    const day = new Date(now);
-    day.setDate(day.getDate() + d);
-    const dayHours = hoursByDay.get(day.getDay());
+    const day = businessNow.startOf("day").plus({ days: d });
+    const dayHours = hoursByDay.get(day.weekday % 7);
     if (!dayHours) continue; // business closed that day
 
     const [startH, startM] = dayHours.startTime.split(":").map(Number);
     const [endH, endM] = dayHours.endTime.split(":").map(Number);
 
-    const cursor = new Date(day);
-    cursor.setHours(startH, startM, 0, 0);
-    const dayEnd = new Date(day);
-    dayEnd.setHours(endH, endM, 0, 0);
+    let cursor = day.set({ hour: startH, minute: startM, second: 0, millisecond: 0 });
+    const dayEnd = day.set({ hour: endH, minute: endM, second: 0, millisecond: 0 });
 
-    while (cursor.getTime() + service.durationMin * 60000 <= dayEnd.getTime()) {
+    while (cursor.plus({ minutes: service.durationMin }) <= dayEnd) {
       if (cursor > now) {
-        const slotEnd = new Date(cursor.getTime() + service.durationMin * 60000);
+        const slotEnd = cursor.plus({ minutes: service.durationMin });
         const breaks = [
           [settings?.breakfastStart, settings?.breakfastEnd],
           [settings?.lunchStart, settings?.lunchEnd],
@@ -72,22 +73,20 @@ export async function generateSlots(req: Request, res: Response) {
         const overlapsBreak = breaks.some(([breakStart, breakEnd]) => {
           const [startH, startM] = String(breakStart).split(":").map(Number);
           const [endH, endM] = String(breakEnd).split(":").map(Number);
-          const breakStartDate = new Date(day);
-          breakStartDate.setHours(startH, startM, 0, 0);
-          const breakEndDate = new Date(day);
-          breakEndDate.setHours(endH, endM, 0, 0);
+          const breakStartDate = day.set({ hour: startH, minute: startM, second: 0, millisecond: 0 });
+          const breakEndDate = day.set({ hour: endH, minute: endM, second: 0, millisecond: 0 });
           return cursor < breakEndDate && slotEnd > breakStartDate;
         });
         if (!overlapsBreak) {
           slotsToCreate.push({
             staffId,
             serviceId,
-            startTime: new Date(cursor),
-            endTime: slotEnd,
+            startTime: cursor.toJSDate(),
+            endTime: slotEnd.toJSDate(),
           });
         }
       }
-      cursor.setMinutes(cursor.getMinutes() + service.durationMin);
+      cursor = cursor.plus({ minutes: service.durationMin });
     }
   }
 
