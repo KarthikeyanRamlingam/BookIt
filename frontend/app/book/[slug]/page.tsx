@@ -17,6 +17,9 @@ interface Business {
   name: string;
   description?: string;
   address?: string;
+  city?: string;
+  state?: string;
+  mapUrl?: string;
   category?: { id: string; name: string; slug: string };
   services: Service[];
 }
@@ -326,7 +329,34 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
               </span>
             )}
           </div>
-          {business.address && <p className="mt-1 text-sm text-slate-300">{business.address}</p>}
+          {(business.address || business.mapUrl) && (
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-300">
+              {business.address?.startsWith("http") ? (
+                <a
+                  href={business.address}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-medium text-blue-400 hover:text-blue-300 underline"
+                >
+                  <span>📍</span> View on Google Maps
+                </a>
+              ) : (
+                <>
+                  <span>📍 {[business.address, business.city, business.state].filter(Boolean).join(", ")}</span>
+                  {business.mapUrl && (
+                    <a
+                      href={business.mapUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 font-semibold text-blue-400 hover:text-blue-300 underline text-xs"
+                    >
+                      (View on Map)
+                    </a>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           {business.description && <p className="mt-1 text-sm text-slate-300">{business.description}</p>}
         </div>
         {reviewSummary && reviewSummary.count > 0 && (

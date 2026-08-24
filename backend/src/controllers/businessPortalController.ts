@@ -27,6 +27,7 @@ const updateBusinessSchema = z.object({
   state: z.string().optional(),
   country: z.string().optional(),
   postalCode: z.string().optional(),
+  mapUrl: z.string().optional(),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
   timezone: z.string().optional(),

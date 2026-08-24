@@ -51,6 +51,7 @@ export default function BusinessRegisterPage() {
   const [state, setState] = useState("");
   const [country, setCountry] = useState("India");
   const [postalCode, setPostalCode] = useState("");
+  const [mapUrl, setMapUrl] = useState("");
   const [businessPhone, setBusinessPhone] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [email, setEmail] = useState("");
@@ -116,6 +117,7 @@ export default function BusinessRegisterPage() {
         state,
         country,
         postalCode,
+        mapUrl: mapUrl.trim() || undefined,
         businessPhone,
         ownerName,
         email,
@@ -252,6 +254,17 @@ export default function BusinessRegisterPage() {
                   <Input id="postalCode" value={postalCode} onChange={setPostalCode} placeholder="560001" />
                 </Field>
               </div>
+              <Field label="Google Maps Location URL (Recommended)" id="mapUrl">
+                <Input
+                  id="mapUrl"
+                  value={mapUrl}
+                  onChange={setMapUrl}
+                  placeholder="https://maps.app.goo.gl/... or https://maps.google.com/..."
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  📍 Customers will see a direct &quot;View on Map / Get Directions&quot; button for this location in their booking dashboard.
+                </p>
+              </Field>
               <Field label="Business Phone" id="bPhone">
                 <Input id="bPhone" value={businessPhone} onChange={setBusinessPhone} placeholder="+91 98765 43210" />
               </Field>
@@ -423,6 +436,7 @@ export default function BusinessRegisterPage() {
               <ReviewRow label="Business Type" value={BUSINESS_TYPES.find((t) => t.slug === categorySlug)?.label || categorySlug} />
               <ReviewRow label="Business Name" value={businessName} />
               <ReviewRow label="Address" value={`${address}, ${city}, ${state}, ${country} ${postalCode}`} />
+              {mapUrl && <ReviewRow label="Map Location" value={mapUrl} />}
               {businessPhone && <ReviewRow label="Business Phone" value={businessPhone} />}
               <ReviewRow label="Owner Name" value={ownerName} />
               <ReviewRow label="Email" value={email} />

@@ -119,6 +119,7 @@ model Business {
   postalCode  String?
   timezone    String         @default("Asia/Kolkata")
   logoUrl     String?
+  mapUrl      String?
   latitude    Float?
   longitude   Float?
   status      BusinessStatus @default(PENDING_VERIFICATION)

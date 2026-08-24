@@ -14,7 +14,15 @@ interface Appointment {
   status: string;
   service: { name: string; price: string };
   slot: { startTime: string; endTime?: string };
-  business?: { name: string; address?: string; category?: { slug: string } };
+  business?: {
+    name: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    mapUrl?: string;
+    category?: { slug: string };
+  };
   staff?: { user: { name: string } };
   customer?: { name: string; email: string };
   payment?: {
@@ -534,6 +542,14 @@ function MyLiveQueuePanel({ queue }: { queue: MyLiveQueue }) {
   );
 }
 
+function getDirectionsUrl(business?: Appointment["business"]): string {
+  if (business?.mapUrl && (business.mapUrl.startsWith("http://") || business.mapUrl.startsWith("https://"))) {
+    return business.mapUrl;
+  }
+  const queryParts = [business?.name, business?.address, business?.city, business?.state].filter(Boolean);
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(queryParts.join(", ") || "Business Location")}`;
+}
+
 function AppointmentCard({
   appointment: a,
   payingId,
@@ -562,6 +578,7 @@ function AppointmentCard({
   const timeStr = dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const showActions = a.status !== "CANCELLED";
+  const directionsUrl = getDirectionsUrl(a.business);
 
   return (
     <div className={`rounded-2xl border border-slate-800 bg-slate-900/90 shadow-xl transition-all hover:border-slate-700 ${isPast ? "opacity-75 bg-slate-900/50" : ""}`}>
@@ -578,6 +595,14 @@ function AppointmentCard({
               {a.business?.name && (
                 <span className="flex items-center gap-1 text-slate-300">
                   <span>🏢</span> {a.business.name}
+                </span>
+              )}
+              {(a.business?.address || a.business?.city) && (
+                <span className="flex items-center gap-1 text-slate-300">
+                  <span>📍</span>
+                  <span className="truncate max-w-[240px]">
+                    {[a.business.address, a.business.city].filter(Boolean).join(", ")}
+                  </span>
                 </span>
               )}
               {a.staff?.user.name && (
@@ -635,6 +660,16 @@ function AppointmentCard({
               {payingId === a.id ? "Redirecting…" : "💳 Pay Now"}
             </button>
           )}
+
+          <a
+            href={directionsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-blue-500/30 bg-blue-950/40 px-3.5 py-2 text-sm font-semibold text-blue-300 hover:bg-blue-900/50 hover:text-white transition-all shadow-sm"
+          >
+            <span>🗺️</span>
+            <span>Get Directions</span>
+          </a>
 
           <AddToCalendarDropdown
             appointmentId={a.id}
