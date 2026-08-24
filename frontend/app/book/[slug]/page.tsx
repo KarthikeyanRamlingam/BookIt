@@ -227,7 +227,11 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
   // Token flow: auto-pick the first available slot for the selected date and book it.
   async function bookTokenForDate() {
     if (!selectedDateStr || !selectedService) return;
-    if (!getSession()) { router.push("/login"); return; }
+    if (!getSession()) {
+      setMessage("Please log in to get your queue token.");
+      router.push(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
+      return;
+    }
 
     const dateSlots = slotsByDateMap.get(selectedDateStr) || [];
     if (dateSlots.length === 0) {
@@ -258,7 +262,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
   async function book(slotId: string) {
     if (!getSession()) {
       setMessage("Please log in before confirming this appointment.");
-      router.push("/login");
+      router.push(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
       return;
     }
 
@@ -293,7 +297,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
     } catch (err: any) {
       if (err?.response?.status === 401) {
         setMessage("Your session has expired. Please log in again before confirming this appointment.");
-        router.push("/login");
+        router.push(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
       } else {
         setMessage(err?.response?.data?.error || "That slot was just taken — pick another.");
       }
@@ -416,12 +420,25 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
         <div className="md:col-span-8 space-y-6">
 
           {message && (
-            <div className={`rounded-xl border p-4 text-sm font-medium ${
-              message.startsWith("Booked") || message.startsWith("Table")
-                ? "border-green-200 bg-green-50 text-green-800"
-                : "border-brand-200 bg-brand-50 text-brand-800"
-            }`}>
-              {message}
+            <div
+              className={`rounded-xl border p-4 text-sm font-semibold shadow-md transition-all ${
+                message.startsWith("Booked") || message.startsWith("Table") || message.startsWith("Confirmed")
+                  ? "border-emerald-500/50 bg-emerald-950/80 text-emerald-300"
+                  : message.startsWith("Please log in")
+                  ? "border-amber-500/50 bg-amber-950/80 text-amber-300"
+                  : "border-rose-500/50 bg-rose-950/90 text-rose-200"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span>
+                  {message.startsWith("Booked") || message.startsWith("Table") || message.startsWith("Confirmed")
+                    ? "✓"
+                    : message.startsWith("Please log in")
+                    ? "⚠️"
+                    : "⚠️"}
+                </span>
+                <span>{message}</span>
+              </div>
             </div>
           )}
 
@@ -487,7 +504,11 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                       onClick={bookTokenForDate}
                       className="rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow hover:bg-brand-700 disabled:opacity-50 transition-colors"
                     >
-                      {booking ? "Getting Token…" : "🎟️ Get Token"}
+                      {booking
+                        ? "Getting Token…"
+                        : !isAuthenticated
+                        ? "Log in to Get Token"
+                        : "🎟️ Get Token"}
                     </button>
                   </div>
                 </div>

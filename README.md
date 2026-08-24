@@ -67,7 +67,7 @@ Say the word and I'll build any of these next, in order or out of order.
 ### 1. Database
 Install PostgreSQL locally, or run it in Docker:
 ```bash
-docker run --name bookit-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=appointment_platform -p 5432:5432 -d postgres:16
+docker run --name bookit-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=appointment_platform -p 5433:5432 -d postgres:16
 ```
 
 ### 2. Backend

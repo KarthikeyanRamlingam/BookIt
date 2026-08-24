@@ -125,13 +125,17 @@ export async function verifyPayment(req: Request, res: Response) {
       },
     });
 
-    await notify({
-      userId: appointment.customerId,
-      appointmentId: appointment.id,
-      to: appointment.customer.email,
-      subject: "Token Booking Payment Confirmed",
-      message: `We've verified your token booking payment of ₹${payment.amount} for ${appointment.service.name}. See you soon!`,
-    });
+    try {
+      await notify({
+        userId: appointment.customerId,
+        appointmentId: appointment.id,
+        to: appointment.customer.email,
+        subject: "Token Booking Payment Confirmed",
+        message: `We've verified your token booking payment of ₹${payment.amount} for ${appointment.service.name}. See you soon!`,
+      });
+    } catch (notifyErr) {
+      console.error("Payment notification note (non-fatal):", notifyErr);
+    }
 
     return res.json({ status: "PAID", payment });
   }

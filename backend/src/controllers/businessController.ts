@@ -23,14 +23,21 @@ export async function getTokenPreview(req: Request, res: Response) {
   const business = await prisma.business.findUnique({ where: { slug: req.params.slug, status: "ACTIVE" } });
   if (!business) throw new ApiError(404, "Business not found");
 
-  const todayParts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: business.timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const todayValues = Object.fromEntries(todayParts.map((part) => [part.type, part.value]));
-  const today = `${todayValues.year}-${todayValues.month}-${todayValues.day}`;
+  const safeTimezone = business.timezone && business.timezone.trim() ? business.timezone.trim() : "Asia/Kolkata";
+  let today = "";
+  try {
+    const todayParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: safeTimezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const todayValues = Object.fromEntries(todayParts.map((part) => [part.type, part.value]));
+    today = `${todayValues.year}-${todayValues.month}-${todayValues.day}`;
+  } catch {
+    const now = new Date();
+    today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  }
   if (date < today) throw new ApiError(400, "Token booking is only available from today onwards.");
 
   const sequence = await prisma.businessTokenSequence.findUnique({

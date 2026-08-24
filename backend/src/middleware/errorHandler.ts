@@ -28,9 +28,23 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
 
   // Prisma unique constraint violation
   if (err?.code === "P2002") {
-    return res.status(409).json({ error: `Duplicate value for field: ${err.meta?.target}` });
+    const target = Array.isArray(err.meta?.target)
+      ? err.meta.target.join(", ")
+      : err.meta?.target || "unique field";
+    return res.status(409).json({ error: `Conflict: duplicate value for ${target}` });
   }
 
-  console.error(err);
-  return res.status(500).json({ error: "Internal server error" });
+  // Prisma record not found
+  if (err?.code === "P2025") {
+    return res.status(404).json({ error: err.meta?.cause || "Record not found" });
+  }
+
+  // Prisma foreign key constraint failed
+  if (err?.code === "P2003") {
+    return res.status(400).json({ error: `Foreign key constraint failed on field: ${err.meta?.field_name || "relation"}` });
+  }
+
+  console.error("Unhandled server error:", err);
+  const errorMessage = process.env.NODE_ENV === "production" ? "Internal server error" : (err?.message || "Internal server error");
+  return res.status(500).json({ error: errorMessage });
 }

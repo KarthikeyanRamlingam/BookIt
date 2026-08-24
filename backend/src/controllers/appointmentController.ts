@@ -9,15 +9,27 @@ import { processCheckInRefund } from "../services/refundService";
 
 type Tx = Prisma.TransactionClient;
 
-function getTokenDate(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
+function getTokenDate(date: Date, timezone?: string) {
+  const safeTimezone = timezone && timezone.trim() ? timezone.trim() : "Asia/Kolkata";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: safeTimezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  } catch {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  }
 }
 
 async function allocateToken(tx: Tx, businessId: string, date: Date, timezone: string) {
@@ -79,11 +91,35 @@ export async function bookAppointment(req: Request, res: Response) {
       throw new ApiError(400, "This appointment time has passed. Please choose a later slot.");
     }
 
-    // Overlapping Time Validation: Prevent time slot collisions across any bookings
+    // For token queues: if this customer already has an active token for this slot/day,
+    // return their existing token booking directly so they can view and pay for it.
+    if (tokenFlow) {
+      const existingCustomerAppt = await tx.appointment.findFirst({
+        where: {
+          customerId: req.user!.userId,
+          slotId: targetSlot.id,
+          status: { in: ["PENDING", "CONFIRMED"] },
+        },
+        include: {
+          service: true,
+          staff: { include: { user: true } },
+          slot: true,
+          customer: true,
+          business: true,
+        },
+      });
+
+      if (existingCustomerAppt) {
+        return existingCustomerAppt;
+      }
+    }
+
+    // Overlapping Time Validation: Prevent time slot collisions across different bookings
     const overlappingAppointment = await tx.appointment.findFirst({
       where: {
         customerId: req.user!.userId,
         status: { in: ["PENDING", "CONFIRMED", "COMPLETED"] },
+        slotId: { not: targetSlot.id },
         slot: {
           startTime: { lt: targetSlot.endTime },
           endTime: { gt: targetSlot.startTime },
@@ -201,13 +237,17 @@ export async function bookAppointment(req: Request, res: Response) {
     return newAppointment;
   });
 
-  await notify({
-    appointmentId: appointment.id,
-    userId: appointment.customerId,
-    to: appointment.customer.email,
-    subject: "Appointment confirmed",
-    message: `Your ${appointment.service.name} appointment is confirmed for ${appointment.slot.startTime.toLocaleString()} with ${appointment.staff.user.name}.`,
-  });
+  try {
+    await notify({
+      appointmentId: appointment.id,
+      userId: appointment.customerId,
+      to: appointment.customer.email,
+      subject: "Appointment confirmed",
+      message: `Your ${appointment.service.name} appointment is confirmed for ${appointment.slot.startTime.toLocaleString()} with ${appointment.staff.user.name}.`,
+    });
+  } catch (notifyErr) {
+    console.error("Booking notification error (non-fatal):", notifyErr);
+  }
 
   res.status(201).json(appointment);
 }
