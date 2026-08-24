@@ -4,6 +4,23 @@ import { BusinessHours } from "@prisma/client";
 import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
 
+const TOKEN_CATEGORY_SLUGS = new Set([
+  "doctor-appointment",
+  "government-office",
+  "general-practitioners",
+  "cardiologists",
+  "pediatricians",
+  "dermatologists",
+  "neurologists",
+  "endocrinologists",
+  "gastroenterologists",
+  "psychiatrists",
+  "orthopedics",
+  "dentists",
+  "ophthalmologists",
+  "gynecologists",
+]);
+
 const generateSchema = z.object({
   staffId: z.string().uuid(),
   serviceId: z.string().uuid(),
@@ -85,15 +102,24 @@ export async function getAvailability(req: Request, res: Response) {
   const { serviceId, staffId, from, to } = req.query;
   if (!serviceId) throw new ApiError(400, "serviceId is required");
 
+  const now = new Date();
+  const requestedFrom = from ? new Date(String(from)) : now;
+  const availabilityFrom = requestedFrom > now ? requestedFrom : now;
+  const service = await prisma.service.findUnique({
+    where: { id: String(serviceId) },
+    include: { business: { include: { category: true } } },
+  });
+  if (!service) throw new ApiError(404, "Service not found");
+  const tokenFlow = TOKEN_CATEGORY_SLUGS.has(service.business.category?.slug || "");
+
   const slots = await prisma.slot.findMany({
     where: {
       serviceId: String(serviceId),
       staffId: staffId ? String(staffId) : undefined,
-      isBooked: false,
-      startTime: {
-        gte: from ? new Date(String(from)) : new Date(),
-        lte: to ? new Date(String(to)) : undefined,
-      },
+      ...(tokenFlow ? {} : { isBooked: false }),
+      ...(tokenFlow
+        ? { endTime: { gt: availabilityFrom, lte: to ? new Date(String(to)) : undefined } }
+        : { startTime: { gte: availabilityFrom, lte: to ? new Date(String(to)) : undefined } }),
     },
     include: { staff: { include: { user: { select: { name: true } } } } },
     orderBy: { startTime: "asc" },

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
 import { processCheckInRefund } from "../services/refundService";
+import { sweepNoShows } from "../services/noShowService";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -299,26 +300,7 @@ export async function confirmCheckIn(req: Request, res: Response) {
     throw new ApiError(400, `Cannot confirm check-in for appointment with status ${checkIn.booking.status}`);
   }
 
-  const business = await prisma.business.findUniqueOrThrow({ where: { id: businessId } });
-  const tokenParts = new Intl.DateTimeFormat("en-US", {
-    timeZone: business.timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(checkIn.booking.slot.startTime);
-  const tokenValues = Object.fromEntries(tokenParts.map((part) => [part.type, part.value]));
-  const tokenDate = `${tokenValues.year}-${tokenValues.month}-${tokenValues.day}`;
-
   await prisma.$transaction(async (tx) => {
-    const sequence = await tx.businessTokenSequence.upsert({
-      where: { businessId_tokenDate: { businessId, tokenDate } },
-      create: { businessId, tokenDate, nextNumber: 2 },
-      update: { nextNumber: { increment: 1 } },
-    });
-    await tx.appointment.update({
-      where: { id: checkIn.bookingId },
-      data: { tokenDate, tokenNumber: sequence.nextNumber - 1 },
-    });
     await tx.checkIn.update({
       where: { id: checkIn.id },
       data: { status: "CONFIRMED", verifiedAt: new Date(), verifiedById: req.user!.userId },
@@ -451,47 +433,8 @@ export async function getBusinessAppointments(req: Request, res: Response) {
  */
 export async function runNoShowSweep(req: Request, res: Response) {
   const now = new Date();
-
-  // Get all businesses with autoNoShow enabled and their grace periods
-  const settings = await prisma.businessSettings.findMany({
-    where: { autoNoShow: true },
-    include: { business: { select: { id: true } } },
-  });
-
-  let totalMarked = 0;
-
-  for (const s of settings) {
-    const graceCutoff = new Date(now.getTime() - s.gracePeriodMinutes * 60 * 1000);
-
-    const overdue = await prisma.appointment.findMany({
-      where: {
-        businessId: s.business.id,
-        status: { in: ["CONFIRMED", "CHECK_IN_PENDING"] },
-        slot: { endTime: { lt: graceCutoff } },
-      },
-      select: { id: true },
-    });
-
-    if (overdue.length > 0) {
-      const overdueIds = overdue.map((a) => a.id);
-      const { count } = await prisma.appointment.updateMany({
-        where: { id: { in: overdueIds } },
-        data: { status: "NO_SHOW" },
-      });
-      // Mark any associated paid payments as retained (non-refundable)
-      await prisma.payment.updateMany({
-        where: {
-          appointmentId: { in: overdueIds },
-          status: "PAID",
-          refundStatus: "NONE",
-        },
-        data: { refundStatus: "RETAINED_NO_SHOW" },
-      });
-      totalMarked += count;
-    }
-  }
-
-  res.json({ swept: totalMarked, at: now.toISOString() });
+  const swept = await sweepNoShows(now);
+  res.json({ swept, at: now.toISOString() });
 }
 
 // ─── Business Settings ────────────────────────────────────────────────────────

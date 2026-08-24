@@ -6,7 +6,7 @@ import { haversineKm } from "../utils/geo";
 
 export async function getBusinessBySlug(req: Request, res: Response) {
   const business = await prisma.business.findUnique({
-    where: { slug: req.params.slug },
+    where: { slug: req.params.slug, status: "ACTIVE" },
     include: {
       services: { where: { active: true } },
       staff: { include: { user: { select: { id: true, name: true } } } },
@@ -20,14 +20,23 @@ export async function getBusinessBySlug(req: Request, res: Response) {
 
 export async function getTokenPreview(req: Request, res: Response) {
   const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).parse(req.query.date);
-  const business = await prisma.business.findUnique({ where: { slug: req.params.slug } });
+  const business = await prisma.business.findUnique({ where: { slug: req.params.slug, status: "ACTIVE" } });
   if (!business) throw new ApiError(404, "Business not found");
 
-  const latest = await prisma.appointment.aggregate({
-    where: { businessId: business.id, tokenDate: date },
-    _max: { tokenNumber: true },
+  const todayParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: business.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const todayValues = Object.fromEntries(todayParts.map((part) => [part.type, part.value]));
+  const today = `${todayValues.year}-${todayValues.month}-${todayValues.day}`;
+  if (date < today) throw new ApiError(400, "Token booking is only available from today onwards.");
+
+  const sequence = await prisma.businessTokenSequence.findUnique({
+    where: { businessId_tokenDate: { businessId: business.id, tokenDate: date } },
   });
-  res.json({ date, nextTokenNumber: (latest._max.tokenNumber || 0) + 1 });
+  res.json({ date, nextTokenNumber: sequence?.nextNumber || 1 });
 }
 
 const hoursSchema = z.object({
@@ -92,7 +101,7 @@ export async function getNearbyBusinesses(req: Request, res: Response) {
   }
 
   const businesses = await prisma.business.findMany({
-    where: { categoryId: categoryIdFilter },
+    where: { categoryId: categoryIdFilter, status: "ACTIVE" },
     include: {
       category: true,
       services: { where: { active: true }, take: 3 },

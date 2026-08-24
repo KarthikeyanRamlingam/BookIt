@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
@@ -258,7 +259,7 @@ model Slot {
   endTime    DateTime
   isBooked   Boolean  @default(false)
 
-  appointment Appointment?
+  appointments Appointment[]
 
   @@unique([staffId, startTime]) // prevents double-booking the same staff at the same start time
   @@index([startTime])
@@ -274,7 +275,7 @@ model Appointment {
   staff      StaffProfile      @relation("StaffAppointments", fields: [staffId], references: [id])
   serviceId  String
   service    Service           @relation(fields: [serviceId], references: [id])
-  slotId     String            @unique
+  slotId     String
   slot       Slot              @relation(fields: [slotId], references: [id])
   status     AppointmentStatus @default(PENDING)
   tokenDate  String?

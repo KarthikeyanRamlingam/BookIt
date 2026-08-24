@@ -149,9 +149,20 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
 
   useEffect(() => {
     if (!selectedService) return;
-    api
-      .get("/slots/availability", { params: { serviceId: selectedService } })
-      .then(({ data }) => setSlots(data));
+    let active = true;
+    const loadSlots = () => {
+      api
+        .get("/slots/availability", { params: { serviceId: selectedService } })
+        .then(({ data }) => {
+          if (active) setSlots(data);
+        });
+    };
+    loadSlots();
+    const interval = setInterval(loadSlots, 60 * 1000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [selectedService]);
 
   useEffect(() => {

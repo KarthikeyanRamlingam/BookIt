@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { getCategoryIcon } from "@/lib/categoryIcons";
 
 interface Category {
   id: string;
@@ -136,7 +137,7 @@ export default function DoctorsPage() {
                 : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
             }`}
           >
-            {category.icon || "🩺"} {category.name}
+            {getCategoryIcon(category)} {category.name}
           </button>
         ))}
       </div>

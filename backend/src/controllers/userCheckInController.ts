@@ -36,7 +36,7 @@ export async function initiateCheckIn(req: Request, res: Response) {
     where: { id: appointmentId },
     include: {
       slot: true,
-      business: { include: { settings: true } },
+      business: { include: { settings: true, category: true } },
       service: true,
     },
   });
@@ -63,8 +63,24 @@ export async function initiateCheckIn(req: Request, res: Response) {
   const checkInBeforeMs = (settings?.checkInBeforeMinutes ?? 30) * 60 * 1000;
   const gracePeriodMs = (settings?.gracePeriodMinutes ?? 15) * 60 * 1000;
   const slotStart = appointment.slot.startTime;
-  const windowOpen = new Date(slotStart.getTime() - checkInBeforeMs);
-  const windowClose = new Date(slotStart.getTime() + gracePeriodMs);
+  const tokenFlow = [
+    "doctor-appointment",
+    "government-office",
+    "general-practitioners",
+    "cardiologists",
+    "pediatricians",
+    "dermatologists",
+    "neurologists",
+    "endocrinologists",
+    "gastroenterologists",
+    "psychiatrists",
+    "orthopedics",
+    "dentists",
+    "ophthalmologists",
+    "gynecologists",
+  ].includes(appointment.business.category?.slug || "");
+  const windowOpen = tokenFlow ? slotStart : new Date(slotStart.getTime() - checkInBeforeMs);
+  const windowClose = tokenFlow ? appointment.slot.endTime : new Date(slotStart.getTime() + gracePeriodMs);
 
   if (now < windowOpen) {
     const minutesUntil = Math.round((windowOpen.getTime() - now.getTime()) / 60000);

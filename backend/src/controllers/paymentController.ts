@@ -20,6 +20,7 @@ export async function createCheckoutSession(req: Request, res: Response) {
   if (!appointment) throw new ApiError(404, "Appointment not found");
   if (appointment.customerId !== req.user!.userId) throw new ApiError(403, "Not your appointment");
   if (appointment.status === "CANCELLED") throw new ApiError(400, "Cannot pay for a cancelled appointment");
+  if (appointment.status === "NO_SHOW") throw new ApiError(400, "Cannot pay for an appointment marked as no-show");
   if (appointment.payment?.status === "PAID") throw new ApiError(409, "This appointment is already paid for");
 
   const tokenFee = (appointment.service as any).tokenFee ?? 50;

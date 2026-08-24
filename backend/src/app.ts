@@ -9,8 +9,26 @@ import { handleStripeWebhook } from "./controllers/paymentController";
 
 const app = express();
 
-app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_URL || "http://localhost:3000", credentials: true }));
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+].filter(Boolean);
+
+app.use(
+  helmet(),
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true,
+  })
+);
 
 // Stripe needs the exact raw bytes of the request body to verify the
 // webhook signature, so this route is registered BEFORE express.json()

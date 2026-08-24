@@ -50,6 +50,35 @@ export async function bookAppointment(req: Request, res: Response) {
       throw new ApiError(404, "Slot not found");
     }
 
+    const staff = await tx.staffProfile.findUniqueOrThrow({ where: { id: targetSlot.staffId } });
+    const business = await tx.business.findUniqueOrThrow({
+      where: { id: staff.businessId },
+      include: { category: true },
+    });
+    if (business.status !== "ACTIVE") {
+      throw new ApiError(400, "This business is not available for bookings yet.");
+    }
+    const tokenFlow = [
+      "doctor-appointment",
+      "government-office",
+      "general-practitioners",
+      "cardiologists",
+      "pediatricians",
+      "dermatologists",
+      "neurologists",
+      "endocrinologists",
+      "gastroenterologists",
+      "psychiatrists",
+      "orthopedics",
+      "dentists",
+      "ophthalmologists",
+      "gynecologists",
+    ].includes(business.category?.slug || "");
+    const now = new Date();
+    if (tokenFlow ? targetSlot.endTime <= now : targetSlot.startTime <= now) {
+      throw new ApiError(400, "This appointment time has passed. Please choose a later slot.");
+    }
+
     // Overlapping Time Validation: Prevent time slot collisions across any bookings
     const overlappingAppointment = await tx.appointment.findFirst({
       where: {
@@ -100,18 +129,18 @@ export async function bookAppointment(req: Request, res: Response) {
       }
     }
 
-    const updateResult = await tx.slot.updateMany({
-      where: { id: slotId, isBooked: false },
-      data: { isBooked: true },
-    });
+    const updateResult = tokenFlow
+      ? { count: 1 }
+      : await tx.slot.updateMany({
+          where: { id: slotId, isBooked: false },
+          data: { isBooked: true },
+        });
 
     if (updateResult.count === 0) {
       throw new ApiError(409, "This slot was just booked by someone else. Please pick another.");
     }
 
     const slot = targetSlot;
-    const staff = await tx.staffProfile.findUniqueOrThrow({ where: { id: slot.staffId } });
-    const business = await tx.business.findUniqueOrThrow({ where: { id: staff.businessId } });
     if (coupon && coupon.businessId !== staff.businessId) {
       throw new ApiError(400, "Coupon is not valid for this business");
     }
@@ -123,7 +152,9 @@ export async function bookAppointment(req: Request, res: Response) {
     // still sitting on it. Reuse that row instead of inserting a new one --
     // this is safe because the isBooked flip above guarantees no ACTIVE
     // appointment currently holds this slot.
-    const existing = await tx.appointment.findUnique({ where: { slotId: slot.id } });
+    const existing = tokenFlow
+      ? await tx.appointment.findFirst({ where: { slotId: slot.id, status: "CANCELLED" } })
+      : await tx.appointment.findFirst({ where: { slotId: slot.id } });
 
     const appointmentData = {
       customerId: req.user!.userId,

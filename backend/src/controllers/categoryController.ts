@@ -24,7 +24,7 @@ export const MEDICAL_SPECIALTY_SLUGS = [
 export async function listCategories(req: Request, res: Response) {
   const categories = await prisma.category.findMany({
     orderBy: { name: "asc" },
-    include: { _count: { select: { businesses: true } } },
+    include: { _count: { select: { businesses: { where: { status: "ACTIVE" } } } } },
   });
 
   // Calculate total doctor businesses across all medical specialty categories

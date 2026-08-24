@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api, getSession, AuthUser } from "@/lib/api";
+import { getCategoryIcon } from "@/lib/categoryIcons";
 
 interface Category {
   id: string;
@@ -144,9 +145,7 @@ export default function HomePage() {
     const topCategories = categories.filter((c) => !MEDICAL_SPECIALTY_SLUGS.has(c.slug));
     return (
       <div className="mx-auto max-w-5xl py-8 px-4">
-        <h1 className="text-3xl font-bold text-white tracking-tight">
-          What are you looking to book, {user.name.split(" ")[0]}?
-        </h1>
+        <h1 className="text-3xl font-bold text-white tracking-tight">What are you looking to book?</h1>
         <p className="mt-2 text-sm text-slate-400">Pick a category to explore verified services and places near you.</p>
 
         {errorMessage ? (
@@ -161,7 +160,7 @@ export default function HomePage() {
                 onClick={() => setSelectedCategory(c)}
                 className="group flex flex-col items-center gap-3 rounded-2xl border border-slate-800 bg-slate-900/90 p-6 text-center shadow-lg transition-all duration-200 hover:-translate-y-1 hover:border-blue-500 hover:bg-slate-800/90 hover:shadow-blue-500/10"
               >
-                <span className="text-4xl transition-transform duration-200 group-hover:scale-110">{c.icon || "📍"}</span>
+                <span className="text-4xl transition-transform duration-200 group-hover:scale-110">{getCategoryIcon(c)}</span>
                 <span className="text-base font-semibold text-slate-100 group-hover:text-blue-400 transition-colors">
                   {c.name}
                 </span>
@@ -186,7 +185,7 @@ export default function HomePage() {
           ← Change category
         </button>
         <div className="rounded-3xl border border-slate-800 bg-slate-900/90 p-8 shadow-xl">
-          <div className="text-4xl mb-3">{selectedCategory.icon || "📍"}</div>
+          <div className="text-4xl mb-3">{getCategoryIcon(selectedCategory)}</div>
           <h1 className="text-2xl font-bold text-white tracking-tight">
             Find {selectedCategory.name.toLowerCase()}s near you
           </h1>
@@ -234,7 +233,7 @@ export default function HomePage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-6 mb-6">
         <div>
           <h1 className="text-3xl font-bold text-white tracking-tight flex items-center gap-2.5">
-            <span>{selectedCategory.icon || "📍"}</span>
+            <span>{getCategoryIcon(selectedCategory)}</span>
             <span>{selectedCategory.name} {coords ? "near you" : ""}</span>
           </h1>
           <p className="mt-1 text-sm text-slate-400">Available services and verified business locations</p>
@@ -268,7 +267,7 @@ export default function HomePage() {
                     : "border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700 hover:bg-slate-800"
                 }`}
               >
-                {spec.icon || "🩺"} {spec.name}
+                {getCategoryIcon(spec)} {spec.name}
               </button>
             ))}
         </div>
