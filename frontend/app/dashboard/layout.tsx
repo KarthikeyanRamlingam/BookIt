@@ -51,6 +51,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const navItems =
     user.role === "PLATFORM_ADMIN" ? PLATFORM_ADMIN_NAV : user.role === "ADMIN" ? ADMIN_NAV : user.role === "STAFF" ? STAFF_NAV : CUSTOMER_NAV;
+  const isOwnerTool = user.role === "ADMIN" && pathname !== "/dashboard";
 
   function logout() {
     clearSession();
@@ -110,7 +111,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-auto p-6 md:p-8 bg-slate-950">
+      <main className={`flex-1 overflow-auto p-6 md:p-8 ${isOwnerTool ? "bg-slate-50 text-slate-900" : "bg-slate-950"}`}>
         {children}
       </main>
     </div>

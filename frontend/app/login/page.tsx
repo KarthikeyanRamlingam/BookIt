@@ -144,9 +144,7 @@ export default function LoginPage() {
                 <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wide">
                   Password
                 </label>
-                <Link href="/register" className="text-xs text-blue-400 hover:underline">
-                  Forgot password?
-                </Link>
+                <span className="text-xs text-slate-500">Contact support for password help</span>
               </div>
               <input
                 id="login-password"

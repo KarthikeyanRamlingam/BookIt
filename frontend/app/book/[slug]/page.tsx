@@ -98,6 +98,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
   const [queueMinutesLeft, setQueueMinutesLeft] = useState<number | null>(null);
   const [tokenPreview, setTokenPreview] = useState<number | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   const isTokenFlow = !!business?.category && TOKEN_CATEGORY_SLUGS.has(business.category.slug);
   const isRestaurant = business?.category?.slug === "restaurant";
@@ -107,6 +108,10 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
   useEffect(() => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
     setNotificationsEnabled(Notification.permission === "granted");
+  }, []);
+
+  useEffect(() => {
+    setIsAuthenticated(!!getSession());
   }, []);
 
   useEffect(() => {
@@ -252,6 +257,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
 
   async function book(slotId: string) {
     if (!getSession()) {
+      setMessage("Please log in before confirming this appointment.");
       router.push("/login");
       return;
     }
@@ -285,21 +291,26 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
       setSlots((prev) => prev.filter((s) => s.id !== slotId));
       setSelectedSlotId(null);
     } catch (err: any) {
-      setMessage(err?.response?.data?.error || "That slot was just taken — pick another.");
+      if (err?.response?.status === 401) {
+        setMessage("Your session has expired. Please log in again before confirming this appointment.");
+        router.push("/login");
+      } else {
+        setMessage(err?.response?.data?.error || "That slot was just taken — pick another.");
+      }
     } finally {
       setBooking(null);
     }
   }
 
-  if (!business) return <p className="p-6 text-gray-500">Loading…</p>;
+  if (!business) return <p className="p-6 text-slate-300">Loading…</p>;
 
   return (
-    <div className="mx-auto max-w-5xl py-4">
+    <div className="mx-auto max-w-5xl py-4 text-slate-100">
       {/* Header Info */}
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold text-gray-900">{business.name}</h1>
+            <h1 className="text-2xl font-semibold text-white">{business.name}</h1>
             {isRestaurant && (
               <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
                 🍽️ Restaurant Dining
@@ -311,8 +322,8 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
               </span>
             )}
           </div>
-          {business.address && <p className="mt-1 text-sm text-gray-500">{business.address}</p>}
-          {business.description && <p className="mt-1 text-sm text-gray-600">{business.description}</p>}
+          {business.address && <p className="mt-1 text-sm text-slate-300">{business.address}</p>}
+          {business.description && <p className="mt-1 text-sm text-slate-300">{business.description}</p>}
         </div>
         {reviewSummary && reviewSummary.count > 0 && (
           <button
@@ -346,7 +357,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
         {/* Services Sidebar */}
         <div className="md:col-span-4 space-y-4">
           <div>
-            <h2 className="text-base font-semibold text-gray-900">
+            <h2 className="text-base font-semibold text-slate-100">
               {isRestaurant ? "1. Select Table & Party Size" : isSalon ? "1. Select Treatment / Service" : "1. Select Service"}
             </h2>
             <div className="mt-3 space-y-2">
@@ -415,7 +426,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
           )}
 
           {!selectedService ? (
-            <div className="rounded-xl border-2 border-dashed border-gray-200 p-10 text-center text-gray-500">
+            <div className="rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/70 p-10 text-center text-slate-300">
               <p className="text-3xl mb-2">{isTokenFlow ? "🎟️" : isRestaurant ? "🍽️" : "📅"}</p>
               <p className="font-medium">
                 {isRestaurant ? "Select a table size from the left to view available reservation slots." : "Select a service to continue."}
@@ -424,9 +435,9 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
           ) : isTokenFlow ? (
             /* ─── TOKEN QUEUE FLOW: pick a date, get a token ─── */
             <div className="space-y-5">
-              <h2 className="text-base font-semibold text-gray-900">2. Pick a Date</h2>
+              <h2 className="text-base font-semibold text-slate-100">2. Pick a Date</h2>
               {availableDateKeys.length === 0 ? (
-                <div className="rounded-xl border-2 border-dashed border-gray-200 p-8 text-center text-gray-500">
+                <div className="rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/70 p-8 text-center text-slate-300">
                   <p className="text-2xl mb-2">😕</p>
                   <p className="font-medium">No queue slots available right now.</p>
                 </div>
@@ -523,7 +534,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
           ) : (
             /* ─── TIME-SLOT FLOW: restaurants, salons, etc. ─── */
             <div className="space-y-6">
-              <h2 className="text-base font-semibold text-gray-900">
+              <h2 className="text-base font-semibold text-slate-100">
                 {isRestaurant ? "2. Select Reservation Date & Dining Session" : "2. Select Date & Time"}
               </h2>
 
@@ -565,14 +576,27 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                       onClick={() => book(selectedSlotId)}
                       className="rounded-xl bg-brand-600 px-6 py-3 text-sm font-medium text-white shadow hover:bg-brand-700 disabled:opacity-50 transition-colors"
                     >
-                      {booking === selectedSlotId ? "Confirming…" : isRestaurant ? "Reserve Table" : "Confirm Appointment"}
+                      {booking === selectedSlotId
+                        ? "Confirming…"
+                        : !isAuthenticated
+                          ? "Log in to confirm"
+                          : isRestaurant
+                            ? "Reserve Table"
+                            : "Confirm Appointment"}
                     </button>
                   </div>
                 </div>
               )}
 
               {bookedAppointmentId && (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-brand-50/70 border border-brand-200 p-4">
+                <div className="rounded-2xl border-2 border-brand-300 bg-brand-50 p-5 shadow-md">
+                  <div className="mb-4">
+                    <p className="text-xs font-bold uppercase tracking-wider text-brand-700">Booking confirmed</p>
+                    <p className="mt-1 text-sm font-semibold text-gray-900">
+                      Your date and time are reserved. Complete payment to confirm your booking.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <AddToCalendarDropdown
                       appointmentId={bookedAppointmentId}
@@ -594,6 +618,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                     <p className="text-[11px] text-gray-500">
                       90% refunded upon arrival & check-in verification.
                     </p>
+                  </div>
                   </div>
                 </div>
               )}
