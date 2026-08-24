@@ -56,186 +56,195 @@ const bookSchema = z.object({
 export async function bookAppointment(req: Request, res: Response) {
   const { slotId, notes, couponCode } = bookSchema.parse(req.body);
 
-  const appointment = await prisma.$transaction(async (tx: Tx) => {
-    const targetSlot = await tx.slot.findUnique({ where: { id: slotId } });
-    if (!targetSlot) {
-      throw new ApiError(404, "Slot not found");
-    }
-
-    const staff = await tx.staffProfile.findUniqueOrThrow({ where: { id: targetSlot.staffId } });
-    const business = await tx.business.findUniqueOrThrow({
-      where: { id: staff.businessId },
-      include: { category: true },
-    });
-    if (business.status !== "ACTIVE") {
-      throw new ApiError(400, "This business is not available for bookings yet.");
-    }
-    const tokenFlow = [
-      "doctor-appointment",
-      "government-office",
-      "general-practitioners",
-      "cardiologists",
-      "pediatricians",
-      "dermatologists",
-      "neurologists",
-      "endocrinologists",
-      "gastroenterologists",
-      "psychiatrists",
-      "orthopedics",
-      "dentists",
-      "ophthalmologists",
-      "gynecologists",
-    ].includes(business.category?.slug || "");
-    const now = new Date();
-    if (tokenFlow ? targetSlot.endTime <= now : targetSlot.startTime <= now) {
-      throw new ApiError(400, "This appointment time has passed. Please choose a later slot.");
-    }
-
-    // For token queues: if this customer already has an active token for this slot/day,
-    // return their existing token booking directly so they can view and pay for it.
-    if (tokenFlow) {
-      const existingCustomerAppt = await tx.appointment.findFirst({
-        where: {
-          customerId: req.user!.userId,
-          slotId: targetSlot.id,
-          status: { in: ["PENDING", "CONFIRMED"] },
-        },
+  // 1. Pre-fetch targetSlot with joined staff and business before transaction to avoid multi-hop round trips
+  const targetSlot = await prisma.slot.findUnique({
+    where: { id: slotId },
+    include: {
+      staff: {
         include: {
-          service: true,
-          staff: { include: { user: true } },
-          slot: true,
-          customer: true,
-          business: true,
-        },
-      });
-
-      if (existingCustomerAppt) {
-        return existingCustomerAppt;
-      }
-    }
-
-    // Overlapping Time Validation: Prevent time slot collisions across different bookings
-    const overlappingAppointment = await tx.appointment.findFirst({
-      where: {
-        customerId: req.user!.userId,
-        status: { in: ["PENDING", "CONFIRMED", "COMPLETED"] },
-        slotId: { not: targetSlot.id },
-        slot: {
-          startTime: { lt: targetSlot.endTime },
-          endTime: { gt: targetSlot.startTime },
+          business: { include: { category: true } },
+          user: true,
         },
       },
-      include: { slot: true, service: true },
+      service: true,
+    },
+  });
+
+  if (!targetSlot) {
+    throw new ApiError(404, "Slot not found");
+  }
+
+  const staff = targetSlot.staff;
+  const business = staff.business;
+  if (business.status !== "ACTIVE") {
+    throw new ApiError(400, "This business is not available for bookings yet.");
+  }
+
+  const tokenFlow = [
+    "doctor-appointment",
+    "government-office",
+    "general-practitioners",
+    "cardiologists",
+    "pediatricians",
+    "dermatologists",
+    "neurologists",
+    "endocrinologists",
+    "gastroenterologists",
+    "psychiatrists",
+    "orthopedics",
+    "dentists",
+    "ophthalmologists",
+    "gynecologists",
+  ].includes(business.category?.slug || "");
+
+  const now = new Date();
+  if (tokenFlow ? targetSlot.endTime <= now : targetSlot.startTime <= now) {
+    throw new ApiError(400, "This appointment time has passed. Please choose a later slot.");
+  }
+
+  // 2. For token queues: check if user already has an active token for this slot
+  if (tokenFlow) {
+    const existingCustomerAppt = await prisma.appointment.findFirst({
+      where: {
+        customerId: req.user!.userId,
+        slotId: targetSlot.id,
+        status: { in: ["PENDING", "CONFIRMED"] },
+      },
+      include: {
+        service: true,
+        staff: { include: { user: true } },
+        slot: true,
+        customer: true,
+        business: true,
+      },
     });
 
-    if (overlappingAppointment) {
-      const conflictStart = new Date(overlappingAppointment.slot.startTime).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const conflictEnd = new Date(overlappingAppointment.slot.endTime).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      throw new ApiError(
-        400,
-        `Time conflict: You already have an active booking for ${overlappingAppointment.service.name} from ${conflictStart} to ${conflictEnd}. Please select a non-overlapping time slot.`
-      );
+    if (existingCustomerAppt) {
+      return res.status(201).json(existingCustomerAppt);
     }
+  }
 
-    let coupon = null;
-    if (couponCode) {
-      coupon = await tx.coupon.findUnique({ where: { code: couponCode } });
-      if (!coupon || !coupon.active || (coupon.expiresAt && coupon.expiresAt < new Date())) {
-        throw new ApiError(400, "Invalid or expired coupon code");
-      }
-      
-      const existing = await tx.couponRedemption.findUnique({
-        where: { couponId_userId: { couponId: coupon.id, userId: req.user!.userId } },
-      });
-      if (existing) {
-        throw new ApiError(400, "You have already used this coupon");
-      }
-      
-      if (coupon.maxRedemptions) {
-        const count = await tx.couponRedemption.count({ where: { couponId: coupon.id } });
-        if (count >= coupon.maxRedemptions) {
-          throw new ApiError(400, "Coupon redemption limit reached");
-        }
-      }
+  // 3. Overlapping booking validation
+  const overlappingAppointment = await prisma.appointment.findFirst({
+    where: {
+      customerId: req.user!.userId,
+      status: { in: ["PENDING", "CONFIRMED", "COMPLETED"] },
+      slotId: { not: targetSlot.id },
+      slot: {
+        startTime: { lt: targetSlot.endTime },
+        endTime: { gt: targetSlot.startTime },
+      },
+    },
+    include: { slot: true, service: true },
+  });
+
+  if (overlappingAppointment) {
+    const conflictStart = new Date(overlappingAppointment.slot.startTime).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const conflictEnd = new Date(overlappingAppointment.slot.endTime).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    throw new ApiError(
+      400,
+      `Time conflict: You already have an active booking for ${overlappingAppointment.service.name} from ${conflictStart} to ${conflictEnd}. Please select a non-overlapping time slot.`
+    );
+  }
+
+  // 4. Coupon validation
+  let coupon: any = null;
+  if (couponCode) {
+    coupon = await prisma.coupon.findUnique({ where: { code: couponCode } });
+    if (!coupon || !coupon.active || (coupon.expiresAt && coupon.expiresAt < new Date())) {
+      throw new ApiError(400, "Invalid or expired coupon code");
     }
-
-    const updateResult = tokenFlow
-      ? { count: 1 }
-      : await tx.slot.updateMany({
-          where: { id: slotId, isBooked: false },
-          data: { isBooked: true },
-        });
-
-    if (updateResult.count === 0) {
-      throw new ApiError(409, "This slot was just booked by someone else. Please pick another.");
-    }
-
-    const slot = targetSlot;
-    if (coupon && coupon.businessId !== staff.businessId) {
+    if (coupon.businessId !== staff.businessId) {
       throw new ApiError(400, "Coupon is not valid for this business");
     }
 
-    const token = await allocateToken(tx, staff.businessId, slot.startTime, business.timezone);
-
-    // A slot can only ever have one Appointment row (slotId is unique), so
-    // if this slot was booked-then-cancelled before, a CANCELLED row is
-    // still sitting on it. Reuse that row instead of inserting a new one --
-    // this is safe because the isBooked flip above guarantees no ACTIVE
-    // appointment currently holds this slot.
-    const existing = tokenFlow
-      ? await tx.appointment.findFirst({ where: { slotId: slot.id, status: "CANCELLED" } })
-      : await tx.appointment.findFirst({ where: { slotId: slot.id } });
-
-    const appointmentData = {
-      customerId: req.user!.userId,
-      businessId: staff.businessId,
-      staffId: slot.staffId,
-      serviceId: slot.serviceId,
-      notes,
-      couponId: coupon?.id,
-      status: "CONFIRMED" as const,
-      ...token,
-      qrCode: crypto.randomUUID(), // fresh QR so the old cancelled appointment's code can't be used to check in
-      checkedInAt: null,
-    };
-
-    const newAppointment = existing
-      ? await tx.appointment.update({
-          where: { id: existing.id },
-          data: appointmentData,
-          include: {
-            service: true,
-            staff: { include: { user: true } },
-            slot: true,
-            customer: true,
-            business: true,
-          },
-        })
-      : await tx.appointment.create({
-          data: { ...appointmentData, slotId: slot.id },
-          include: {
-            service: true,
-            staff: { include: { user: true } },
-            slot: true,
-            customer: true,
-            business: true,
-          },
-        });
-
-    if (coupon) {
-      await tx.couponRedemption.create({
-        data: { couponId: coupon.id, userId: req.user!.userId },
-      });
+    const existing = await prisma.couponRedemption.findUnique({
+      where: { couponId_userId: { couponId: coupon.id, userId: req.user!.userId } },
+    });
+    if (existing) {
+      throw new ApiError(400, "You have already used this coupon");
     }
 
-    return newAppointment;
-  });
+    if (coupon.maxRedemptions) {
+      const count = await prisma.couponRedemption.count({ where: { couponId: coupon.id } });
+      if (count >= coupon.maxRedemptions) {
+        throw new ApiError(400, "Coupon redemption limit reached");
+      }
+    }
+  }
+
+  // 5. Atomic transaction with 25s timeout for remote cloud latency
+  const appointment = await prisma.$transaction(
+    async (tx: Tx) => {
+      const updateResult = tokenFlow
+        ? { count: 1 }
+        : await tx.slot.updateMany({
+            where: { id: slotId, isBooked: false },
+            data: { isBooked: true },
+          });
+
+      if (updateResult.count === 0) {
+        throw new ApiError(409, "This slot was just booked by someone else. Please pick another.");
+      }
+
+      const token = await allocateToken(tx, staff.businessId, targetSlot.startTime, business.timezone);
+
+      const existing = tokenFlow
+        ? await tx.appointment.findFirst({ where: { slotId: targetSlot.id, status: "CANCELLED" } })
+        : await tx.appointment.findFirst({ where: { slotId: targetSlot.id } });
+
+      const appointmentData = {
+        customerId: req.user!.userId,
+        businessId: staff.businessId,
+        staffId: targetSlot.staffId,
+        serviceId: targetSlot.serviceId,
+        notes,
+        couponId: coupon?.id,
+        status: "CONFIRMED" as const,
+        ...token,
+        qrCode: crypto.randomUUID(),
+        checkedInAt: null,
+      };
+
+      const newAppointment = existing
+        ? await tx.appointment.update({
+            where: { id: existing.id },
+            data: appointmentData,
+            include: {
+              service: true,
+              staff: { include: { user: true } },
+              slot: true,
+              customer: true,
+              business: true,
+            },
+          })
+        : await tx.appointment.create({
+            data: { ...appointmentData, slotId: targetSlot.id },
+            include: {
+              service: true,
+              staff: { include: { user: true } },
+              slot: true,
+              customer: true,
+              business: true,
+            },
+          });
+
+      if (coupon) {
+        await tx.couponRedemption.create({
+          data: { couponId: coupon.id, userId: req.user!.userId },
+        });
+      }
+
+      return newAppointment;
+    },
+    { maxWait: 15000, timeout: 25000 }
+  );
 
   try {
     await notify({
