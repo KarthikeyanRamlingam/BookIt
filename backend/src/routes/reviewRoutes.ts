@@ -5,6 +5,6 @@ import { requireAuth } from "../middleware/auth";
 const router = Router();
 
 router.post("/", requireAuth, createReview);
-router.get("/business/:slug", listBusinessReviews); // public
+router.get("/business/:slug", requireAuth, listBusinessReviews);
 
 export default router;

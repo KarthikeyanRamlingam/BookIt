@@ -13,15 +13,16 @@ export async function requireBusinessAccess(req: Request, res: Response, next: N
     if (req.user.role === "ADMIN") {
       const business = await prisma.business.findUnique({ where: { ownerId: req.user.userId } });
       if (!business) return res.status(404).json({ error: "You don't own a business" });
-      (req as any).businessId = business.id;
-      (req as any).business = business;
+      req.businessId = business.id;
+      req.business = business;
       return next();
     }
 
     if (req.user.role === "STAFF") {
       const staff = await prisma.staffProfile.findUnique({ where: { userId: req.user.userId } });
       if (!staff) return res.status(403).json({ error: "Staff profile not found" });
-      (req as any).businessId = staff.businessId;
+      if (!staff.active) return res.status(403).json({ error: "Staff access has been deactivated" });
+      req.businessId = staff.businessId;
       return next();
     }
 

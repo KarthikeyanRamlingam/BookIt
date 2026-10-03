@@ -6,9 +6,11 @@ import Link from "next/link";
 import Image from "next/image";
 import { GoogleLogin, CredentialResponse } from "@react-oauth/google";
 import { api, saveSession } from "@/lib/api";
+import { getPostAuthDestination, getRequestedRedirect } from "@/lib/authFlow";
 
 export default function LoginPage() {
   const router = useRouter();
+  const redirectPath = getRequestedRedirect();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,7 +26,7 @@ export default function LoginPage() {
     try {
       const { data } = await api.post("/auth/login", { email, password });
       saveSession(data.token, data.user);
-      router.push(data.user.role === "PLATFORM_ADMIN" ? "/dashboard/admin" : "/dashboard");
+      router.replace(getPostAuthDestination(data.user, redirectPath));
     } catch (err: any) {
       setError(err?.response?.data?.error || "Invalid email or password");
     } finally {
@@ -46,7 +48,7 @@ export default function LoginPage() {
         credential: credentialResponse.credential,
       });
       saveSession(data.token, data.user);
-      router.push("/dashboard");
+      router.replace(getPostAuthDestination(data.user, redirectPath));
     } catch (err: any) {
       setError(err?.response?.data?.error || "Google sign-in failed. Please try again.");
     } finally {
@@ -98,7 +100,6 @@ export default function LoginPage() {
               size="large"
               text="continue_with"
               width="340"
-              useOneTap
             />
             <p className="text-[11px] text-slate-500 text-center">
               Clicking above opens the real Google account picker
@@ -180,7 +181,10 @@ export default function LoginPage() {
 
           <p className="mt-6 text-center text-sm text-slate-400">
             Don&apos;t have an account?{" "}
-            <Link href="/register" className="font-semibold text-blue-400 hover:underline">
+            <Link
+              href={redirectPath ? `/register?redirect=${encodeURIComponent(redirectPath)}` : "/register"}
+              className="font-semibold text-blue-400 hover:underline"
+            >
               Create one free
             </Link>
           </p>

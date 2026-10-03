@@ -6,8 +6,13 @@ import morgan from "morgan";
 import routes from "./routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { handleStripeWebhook } from "./controllers/paymentController";
+import { rateLimit } from "./middleware/rateLimit";
+import { prisma } from "./config/db";
+import internalRoutes from "./routes/internalRoutes";
 
 const app = express();
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
 
 const configuredOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "")
   .split(",")
@@ -39,17 +44,35 @@ app.use(
 // webhook signature, so this route is registered BEFORE express.json()
 // and given its own raw-body parser -- it must never go through the
 // global JSON middleware below.
-app.post("/api/payments/webhook", express.raw({ type: "application/json" }), handleStripeWebhook);
+app.post(
+  "/api/payments/webhook",
+  rateLimit({ windowMs: 60 * 1000, max: 120, keyPrefix: "stripe-webhook" }),
+  express.raw({ type: "application/json", limit: "256kb" }),
+  handleStripeWebhook
+);
 
-app.use(express.json());
-app.use(morgan("dev"));
+app.use(express.json({ limit: "1mb" }));
+app.use(process.env.NODE_ENV === "production" ? morgan("combined") : morgan("dev"));
+app.use("/api/auth", rateLimit({ windowMs: 15 * 60 * 1000, max: 40, keyPrefix: "auth" }));
+app.use("/api", rateLimit({ windowMs: 60 * 1000, max: 300, keyPrefix: "api" }));
 
 app.get("/", (_req, res) => {
   res.json({ message: "Appointment Platform API is running", status: "ok" });
 });
 
-app.get("/health", (_req, res) => res.json({ status: "ok" }));
+app.get("/health", (_req, res) => res.json({ status: "ok", uptimeSeconds: Math.round(process.uptime()) }));
+app.get("/health/ready", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ready" });
+  } catch {
+    res.status(503).json({ status: "unavailable" });
+  }
+});
 app.use("/api", routes);
+app.use("/api/internal", internalRoutes);
+
+app.use((_req, res) => res.status(404).json({ error: "Route not found" }));
 
 app.use(errorHandler);
 

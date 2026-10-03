@@ -13,6 +13,7 @@ import categoryRoutes from "./categoryRoutes";
 import calendarRoutes from "./calendarRoutes";
 import pushRoutes from "./pushRoutes";
 import adminRoutes from "./adminRoutes";
+import waitlistRoutes from "./waitlistRoutes";
 
 const router = Router();
 
@@ -30,5 +31,6 @@ router.use("/categories", categoryRoutes);
 router.use("/calendar", calendarRoutes);
 router.use("/push", pushRoutes);
 router.use("/admin", adminRoutes);
+router.use("/waitlist", waitlistRoutes);
 
 export default router;

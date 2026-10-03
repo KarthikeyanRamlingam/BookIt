@@ -1,10 +1,12 @@
 import { Request, Response } from "express";
+import { Prisma } from "@prisma/client";
 import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
 import { processCheckInRefund } from "../services/refundService";
 import { sweepNoShows } from "../services/noShowService";
+import { DateTime } from "luxon";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -20,6 +22,7 @@ const CHECK_IN_SESSION_TTL_SECONDS = 60;
 
 const updateBusinessSchema = z.object({
   name: z.string().min(2).optional(),
+  logoUrl: z.string().trim().url().max(2048).nullable().optional(),
   description: z.string().optional(),
   address: z.string().optional(),
   phone: z.string().optional(),
@@ -66,11 +69,22 @@ export async function updateMyBusiness(req: Request, res: Response) {
 
 export async function getDashboardStats(req: Request, res: Response) {
   const businessId = getBusinessId(req);
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { status: true, timezone: true },
+  });
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date();
-  todayEnd.setHours(23, 59, 59, 999);
+  const businessNow = DateTime.now().setZone(business?.timezone || "Asia/Kolkata");
+  const todayStart = businessNow.startOf("day").toJSDate();
+  const tomorrowStart = businessNow.plus({ days: 1 }).startOf("day").toJSDate();
+  const todayKey = businessNow.toISODate() || "";
+  const todayAppointmentFilter: Prisma.AppointmentWhereInput = {
+    businessId,
+    OR: [
+      { slot: { startTime: { gte: todayStart, lt: tomorrowStart } } },
+      { tokenDate: todayKey },
+    ],
+  };
 
   const [
     todayTotal,
@@ -85,40 +99,35 @@ export async function getDashboardStats(req: Request, res: Response) {
     // Today's total bookings (all non-cancelled)
     prisma.appointment.count({
       where: {
-        businessId,
-        slot: { startTime: { gte: todayStart, lte: todayEnd } },
+        ...todayAppointmentFilter,
         status: { notIn: ["CANCELLED"] },
       },
     }),
     // Checked in today
     prisma.appointment.count({
       where: {
-        businessId,
-        slot: { startTime: { gte: todayStart, lte: todayEnd } },
+        ...todayAppointmentFilter,
         status: { in: ["CHECKED_IN", "ATTENDED"] },
       },
     }),
     // Attended today
     prisma.appointment.count({
       where: {
-        businessId,
-        slot: { startTime: { gte: todayStart, lte: todayEnd } },
+        ...todayAppointmentFilter,
         status: "ATTENDED",
       },
     }),
     // No shows today
     prisma.appointment.count({
       where: {
-        businessId,
-        slot: { startTime: { gte: todayStart, lte: todayEnd } },
+        ...todayAppointmentFilter,
         status: "NO_SHOW",
       },
     }),
     // Cancelled today
     prisma.appointment.count({
       where: {
-        businessId,
-        slot: { startTime: { gte: todayStart, lte: todayEnd } },
+        ...todayAppointmentFilter,
         status: "CANCELLED",
       },
     }),
@@ -152,6 +161,7 @@ export async function getDashboardStats(req: Request, res: Response) {
   ]);
 
   res.json({
+    businessStatus: business?.status ?? "PENDING_VERIFICATION",
     today: {
       total: todayTotal,
       checkedIn: todayCheckedIn,
@@ -168,16 +178,20 @@ export async function getDashboardStats(req: Request, res: Response) {
 // Live queue: the first verified arrival is currently being served.
 export async function getLiveQueue(req: Request, res: Response) {
   const businessId = getBusinessId(req);
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(todayStart);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  const business = await prisma.business.findUnique({ where: { id: businessId }, select: { timezone: true } });
+  if (!business) throw new ApiError(404, "Business not found");
+  const businessDay = DateTime.now().setZone(business.timezone);
+  const todayStart = businessDay.startOf("day").toJSDate();
+  const tomorrow = businessDay.plus({ days: 1 }).startOf("day").toJSDate();
 
   const appointments = await prisma.appointment.findMany({
     where: {
       businessId,
       status: "CHECKED_IN",
-      checkedInAt: { gte: todayStart, lt: tomorrow },
+      OR: [
+        { checkedInAt: { gte: todayStart, lt: tomorrow } },
+        { tokenDate: businessDay.toISODate() || "" },
+      ],
     },
     include: {
       customer: { select: { name: true } },
@@ -302,14 +316,15 @@ export async function confirmCheckIn(req: Request, res: Response) {
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.checkIn.update({
-      where: { id: checkIn.id },
+    const checkInClaim = await tx.checkIn.updateMany({
+      where: { id: checkIn.id, status: "PENDING" },
       data: { status: "CONFIRMED", verifiedAt: new Date(), verifiedById: req.user!.userId },
     });
-    await tx.appointment.update({
-      where: { id: checkIn.bookingId },
+    const bookingClaim = await tx.appointment.updateMany({
+      where: { id: checkIn.bookingId, status: { in: ["CONFIRMED", "CHECK_IN_PENDING"] } },
       data: { status: "CHECKED_IN", checkedInAt: new Date() },
     });
+    if (!checkInClaim.count || !bookingClaim.count) throw new ApiError(409, "Booking state changed; refresh and try again.");
   });
 
   // Trigger 90% token fee refund back to user
@@ -339,22 +354,23 @@ export async function rejectCheckIn(req: Request, res: Response) {
   if (checkIn.businessId !== businessId) throw new ApiError(403, "Not authorized for this check-in");
   if (checkIn.status !== "PENDING") throw new ApiError(409, `Check-in already ${checkIn.status.toLowerCase()}`);
 
-  await prisma.$transaction([
-    prisma.checkIn.update({
-      where: { id: checkIn.id },
+  await prisma.$transaction(async (tx) => {
+    const checkInClaim = await tx.checkIn.updateMany({
+      where: { id: checkIn.id, status: "PENDING" },
       data: {
         status: "REJECTED",
         verifiedAt: new Date(),
         verifiedById: req.user!.userId,
         rejectionReason: reason,
       },
-    }),
+    });
     // Revert appointment back to CONFIRMED so user can try again
-    prisma.appointment.update({
-      where: { id: checkIn.bookingId },
+    const bookingClaim = await tx.appointment.updateMany({
+      where: { id: checkIn.bookingId, status: "CHECK_IN_PENDING" },
       data: { status: "CONFIRMED" },
-    }),
-  ]);
+    });
+    if (!checkInClaim.count || !bookingClaim.count) throw new ApiError(409, "Booking state changed; refresh and try again.");
+  });
 
   res.json({ message: "Check-in rejected", reason });
 }
@@ -371,20 +387,25 @@ export async function markAttended(req: Request, res: Response) {
     throw new ApiError(400, `Can only mark CHECKED_IN appointments as attended. Current status: ${appointment.status}`);
   }
 
-  const updated = await prisma.appointment.update({
-    where: { id: appointment.id },
-    data: { status: "ATTENDED", attendedAt: new Date() },
-    include: {
-      customer: { select: { name: true, email: true } },
-      service: true,
-      slot: true,
-    },
-  });
-
-  // Award loyalty points
-  await prisma.user.update({
-    where: { id: appointment.customerId },
-    data: { loyaltyPoints: { increment: 50 } },
+  const updated = await prisma.$transaction(async (tx) => {
+    const claim = await tx.appointment.updateMany({
+      where: { id: appointment.id, status: "CHECKED_IN" },
+      data: { status: "ATTENDED", attendedAt: new Date() },
+    });
+    if (!claim.count) throw new ApiError(409, "Booking state changed; refresh and try again.");
+    const attended = await tx.appointment.findUniqueOrThrow({
+      where: { id: appointment.id },
+      include: {
+        customer: { select: { name: true, email: true } },
+        service: true,
+        slot: true,
+      },
+    });
+    await tx.user.update({
+      where: { id: appointment.customerId },
+      data: { loyaltyPoints: { increment: 50 } },
+    });
+    return attended;
   });
 
   res.json(updated);
@@ -398,12 +419,14 @@ export async function getBusinessAppointments(req: Request, res: Response) {
   const where: any = { businessId };
   if (req.query.status) where.status = req.query.status;
   if (req.query.date) {
-    const date = new Date(String(req.query.date));
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
-    dayEnd.setHours(23, 59, 59, 999);
-    where.slot = { startTime: { gte: dayStart, lte: dayEnd } };
+    const dayKey = String(req.query.date).slice(0, 10);
+    const business = await prisma.business.findUnique({ where: { id: businessId }, select: { timezone: true } });
+    const dayStart = DateTime.fromISO(dayKey, { zone: business?.timezone || "Asia/Kolkata" }).startOf("day").toJSDate();
+    const dayEnd = DateTime.fromISO(dayKey, { zone: business?.timezone || "Asia/Kolkata" }).plus({ days: 1 }).startOf("day").toJSDate();
+    where.OR = [
+      { slot: { startTime: { gte: dayStart, lt: dayEnd } } },
+      { tokenDate: dayKey },
+    ];
   }
 
   const appointments = await prisma.appointment.findMany({
@@ -415,7 +438,7 @@ export async function getBusinessAppointments(req: Request, res: Response) {
       checkIn: true,
       payment: true,
     },
-    orderBy: { slot: { startTime: "asc" } },
+    orderBy: [{ tokenDate: "asc" }, { createdAt: "asc" }],
     take: 100,
   });
 
@@ -443,6 +466,7 @@ export async function runNoShowSweep(req: Request, res: Response) {
 const settingsSchema = z.object({
   checkInBeforeMinutes: z.number().min(0).max(120).optional(),
   gracePeriodMinutes: z.number().min(0).max(60).optional(),
+  cancellationCutoffMinutes: z.number().int().min(0).max(10080).optional(),
   autoNoShow: z.boolean().optional(),
   locationVerificationEnabled: z.boolean().optional(),
   breakfastStart: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),

@@ -8,14 +8,14 @@ const transporter =
     ? nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: Number(process.env.SMTP_PORT) || 587,
-        secure: false,
+        secure: Number(process.env.SMTP_PORT) === 465,
         auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
       })
     : null;
 
 export async function sendEmail(to: string, subject: string, text: string): Promise<boolean> {
   if (!transporter) {
-    console.log(`[email:skipped, no SMTP configured] to=${to} subject="${subject}"`);
+    if (process.env.NODE_ENV !== "production") console.log("[email:skipped, no SMTP configured]");
     return false;
   }
   try {
@@ -24,6 +24,8 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
       to,
       subject,
       text,
+      disableFileAccess: true,
+      disableUrlAccess: true,
     });
     return true;
   } catch (err) {

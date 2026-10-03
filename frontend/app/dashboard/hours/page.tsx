@@ -33,6 +33,7 @@ export default function BusinessHoursPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [cancellationCutoffMinutes, setCancellationCutoffMinutes] = useState(120);
   const [error, setError] = useState<string | null>(null);
   const [breaks, setBreaks] = useState<MealBreaks>({
     breakfastStart: "", breakfastEnd: "", lunchStart: "", lunchEnd: "", dinnerStart: "", dinnerEnd: "",
@@ -43,6 +44,7 @@ export default function BusinessHoursPage() {
       .then(([businessResponse, settingsResponse]) => {
         const data = businessResponse.data;
         const settings = settingsResponse.data;
+        setCancellationCutoffMinutes(settings.cancellationCutoffMinutes ?? 120);
         setBreaks({
           breakfastStart: settings.breakfastStart || "", breakfastEnd: settings.breakfastEnd || "",
           lunchStart: settings.lunchStart || "", lunchEnd: settings.lunchEnd || "",
@@ -93,9 +95,10 @@ export default function BusinessHoursPage() {
     setSuccess(false);
     try {
       await api.put("/businesses/hours", { hours });
-      await api.patch("/business/settings", Object.fromEntries(
-        Object.entries(breaks).map(([key, value]) => [key, value || null])
-      ));
+      await api.patch("/business/settings", {
+        ...Object.fromEntries(Object.entries(breaks).map(([key, value]) => [key, value || null])),
+        cancellationCutoffMinutes,
+      });
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (e: any) {
@@ -201,6 +204,15 @@ export default function BusinessHoursPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-xl border bg-white p-4 shadow-sm">
+          <label htmlFor="cancellation-cutoff" className="block font-medium text-gray-900">Online cancellation deadline</label>
+          <p className="mt-1 text-xs text-gray-500">Customers can cancel online up to this long before the appointment or queue opening time. Paid booking fees are refunded for on-time cancellations.</p>
+          <div className="mt-3 flex items-center gap-3">
+            <input id="cancellation-cutoff" type="number" min={0} max={10080} step={15} value={cancellationCutoffMinutes} onChange={(event) => setCancellationCutoffMinutes(Math.max(0, Number(event.target.value) || 0))} className="w-28 rounded-lg border px-3 py-2 text-sm" />
+            <span className="text-sm text-gray-600">minutes before</span>
           </div>
         </div>
 

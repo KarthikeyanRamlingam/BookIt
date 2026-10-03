@@ -56,7 +56,7 @@ export async function decideBusinessApplication(req: Request, res: Response) {
 export async function deleteBusiness(req: Request, res: Response) {
   const business = await prisma.business.findUnique({
     where: { id: req.params.id },
-    select: { id: true, ownerId: true },
+    select: { id: true, ownerId: true, staff: { select: { userId: true } } },
   });
   if (!business) throw new ApiError(404, "Business not found");
 
@@ -77,6 +77,12 @@ export async function deleteBusiness(req: Request, res: Response) {
     await tx.businessSettings.deleteMany({ where: { businessId: business.id } });
     await tx.businessTokenSequence.deleteMany({ where: { businessId: business.id } });
     await tx.staffProfile.deleteMany({ where: { businessId: business.id } });
+    if (business.staff.length > 0) {
+      await tx.user.updateMany({
+        where: { id: { in: business.staff.map((member) => member.userId) } },
+        data: { role: "CUSTOMER" },
+      });
+    }
     await tx.service.deleteMany({ where: { businessId: business.id } });
     await tx.business.delete({ where: { id: business.id } });
     await tx.user.update({ where: { id: business.ownerId }, data: { role: "CUSTOMER" } });

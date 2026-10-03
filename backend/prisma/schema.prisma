@@ -22,6 +22,11 @@ enum BusinessStatus {
   REJECTED
 }
 
+enum BookingMode {
+  APPOINTMENT
+  QUEUE
+}
+
 enum AppointmentStatus {
   PENDING
   CONFIRMED
@@ -101,6 +106,7 @@ model Category {
   name      String
   slug      String   @unique
   icon      String?
+  bookingMode BookingMode @default(APPOINTMENT)
   createdAt DateTime @default(now())
 
   businesses Business[]
@@ -167,6 +173,7 @@ model BusinessSettings {
   checkInBeforeMinutes     Int      @default(30)  // how many minutes before appt check-in opens
   gracePeriodMinutes       Int      @default(15)  // how many minutes after appt time before auto no-show
   autoNoShow               Boolean  @default(true)
+  cancellationCutoffMinutes Int     @default(120)
   locationVerificationEnabled Boolean @default(false)
   breakfastStart           String?
   breakfastEnd             String?
@@ -226,6 +233,7 @@ model StaffProfile {
   businessId String
   business   Business @relation(fields: [businessId], references: [id])
   title      String?
+  active     Boolean  @default(true)
   createdAt  DateTime @default(now())
 
   slots        Slot[]
@@ -262,7 +270,7 @@ model Slot {
 
   appointments Appointment[]
 
-  @@unique([staffId, startTime]) // prevents double-booking the same staff at the same start time
+  @@unique([serviceId, staffId, startTime])
   @@index([startTime])
 }
 
@@ -272,12 +280,12 @@ model Appointment {
   customer   User              @relation("CustomerAppointments", fields: [customerId], references: [id])
   businessId String
   business   Business          @relation(fields: [businessId], references: [id])
-  staffId    String
-  staff      StaffProfile      @relation("StaffAppointments", fields: [staffId], references: [id])
+  staffId    String?
+  staff      StaffProfile?     @relation("StaffAppointments", fields: [staffId], references: [id])
   serviceId  String
   service    Service           @relation(fields: [serviceId], references: [id])
-  slotId     String
-  slot       Slot              @relation(fields: [slotId], references: [id])
+  slotId     String?
+  slot       Slot?             @relation(fields: [slotId], references: [id])
   status     AppointmentStatus @default(PENDING)
   tokenDate  String?
   tokenNumber Int?
@@ -326,8 +334,11 @@ model Payment {
   status        PaymentStatus @default(PENDING)
   refundAmount  Decimal?      @db.Decimal(10, 2)
   refundStatus  String?       @default("NONE") // "NONE" | "REFUNDED_90_PERCENT" | "RETAINED_NO_SHOW"
+  refundAttempts Int          @default(0)
+  providerRefundRefId String?
   refundedAt    DateTime?
   createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 }
 
 model Review {
@@ -354,6 +365,9 @@ model WaitlistEntry {
   preferredDate DateTime
   notified      Boolean  @default(false)
   createdAt     DateTime @default(now())
+
+  @@unique([customerId, serviceId, preferredDate])
+  @@index([serviceId, preferredDate, notified])
 }
 
 model Coupon {

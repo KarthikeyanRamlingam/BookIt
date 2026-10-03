@@ -7,7 +7,7 @@ const client =
 
 export async function sendSms(to: string, body: string): Promise<boolean> {
   if (!client || !process.env.TWILIO_SMS_FROM) {
-    console.log(`[sms:skipped, no Twilio configured] to=${to} body="${body}"`);
+    if (process.env.NODE_ENV !== "production") console.log("[sms:skipped, no Twilio configured]");
     return false;
   }
   try {
@@ -21,7 +21,7 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
 
 export async function sendWhatsApp(to: string, body: string): Promise<boolean> {
   if (!client || !process.env.TWILIO_WHATSAPP_FROM) {
-    console.log(`[whatsapp:skipped, no Twilio configured] to=${to} body="${body}"`);
+    if (process.env.NODE_ENV !== "production") console.log("[whatsapp:skipped, no Twilio configured]");
     return false;
   }
   try {

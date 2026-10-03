@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getSession } from "@/lib/api";
+import { getLoginPathForCurrentPage } from "@/lib/authFlow";
 import AddToCalendarDropdown from "@/components/AddToCalendarDropdown";
+import BusinessVisual from "@/components/BusinessVisual";
+import { AppIcon } from "@/components/AppIcon";
 
 interface Service {
   id: string;
   name: string;
+  price: string;
   tokenFee?: string;
   durationMin: number;
 }
@@ -15,12 +19,15 @@ interface Service {
 interface Business {
   id: string;
   name: string;
+  logoUrl?: string | null;
   description?: string;
   address?: string;
   city?: string;
   state?: string;
   mapUrl?: string;
-  category?: { id: string; name: string; slug: string };
+  timezone: string;
+  category?: { id: string; name: string; slug: string; bookingMode: "APPOINTMENT" | "QUEUE" };
+  businessHours: { dayOfWeek: number; startTime: string; endTime: string }[];
   services: Service[];
 }
 
@@ -46,49 +53,43 @@ interface ReviewSummary {
 }
 
 interface TokenInfo {
-  token: string;
-  waitMinutes: number;
+  tokenNumber: number;
+  estimatedWaitMinutes: number;
 }
 
-const TOKEN_CATEGORY_SLUGS = new Set([
-  "doctor-appointment",
-  "general-practitioners",
-  "cardiologists",
-  "pediatricians",
-  "dermatologists",
-  "neurologists",
-  "endocrinologists",
-  "gastroenterologists",
-  "psychiatrists",
-  "orthopedics",
-  "dentists",
-  "ophthalmologists",
-  "gynecologists",
-  "government-office",
-]);
+function businessDateKey(value: string | Date, timezone: string) {
+  const date = value instanceof Date ? value : new Date(value);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone || "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(date);
+  const fields = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${fields.year}-${fields.month}-${fields.day}`;
+}
 
-const SPECIALTY_WAIT_MINUTES: Record<string, number> = {
-  "general-practitioners": 18,
-  cardiologists: 22,
-  pediatricians: 20,
-  dermatologists: 17,
-  neurologists: 25,
-  endocrinologists: 21,
-  gastroenterologists: 24,
-  psychiatrists: 19,
-  orthopedics: 20,
-  dentists: 15,
-  ophthalmologists: 18,
-  gynecologists: 22,
-  "government-office": 15,
-};
+function localDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
-export default function BookingPage({ params }: { params: { slug: string } }) {
+function dateFromKey(dateKey: string) {
+  return new Date(`${dateKey}T12:00:00`);
+}
+
+function weekdayFromKey(dateKey: string) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+export default function BookingPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = use(params);
   const router = useRouter();
+  const [authorized, setAuthorized] = useState(false);
   const [business, setBusiness] = useState<Business | null>(null);
+  const [businessLoadError, setBusinessLoadError] = useState<string | null>(null);
   const [reviewSummary, setReviewSummary] = useState<ReviewSummary | null>(null);
   const [selectedService, setSelectedService] = useState<string | null>(null);
   const [slots, setSlots] = useState<Slot[]>([]);
+  const [queueDates, setQueueDates] = useState<string[]>([]);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [selectedDateStr, setSelectedDateStr] = useState<string | null>(null);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [bookedAppointmentId, setBookedAppointmentId] = useState<string | null>(null);
@@ -98,71 +99,96 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
   const [message, setMessage] = useState<string | null>(null);
   const [showReviews, setShowReviews] = useState(false);
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
-  const [queueMinutesLeft, setQueueMinutesLeft] = useState<number | null>(null);
   const [tokenPreview, setTokenPreview] = useState<number | null>(null);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [rescheduleId, setRescheduleId] = useState<string | null>(null);
+  const [waitlistJoined, setWaitlistJoined] = useState(false);
 
-  const isTokenFlow = !!business?.category && TOKEN_CATEGORY_SLUGS.has(business.category.slug);
+  const isTokenFlow = business?.category?.bookingMode === "QUEUE";
   const isRestaurant = business?.category?.slug === "restaurant";
   const isSalon = business?.category?.slug === "salon";
   const [occasionNote, setOccasionNote] = useState<string>("");
 
   useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-    setNotificationsEnabled(Notification.permission === "granted");
-  }, []);
-
-  useEffect(() => {
-    setIsAuthenticated(!!getSession());
-  }, []);
-
-  useEffect(() => {
-    if (!tokenInfo || !isTokenFlow || !bookedAppointmentId) return;
-    setQueueMinutesLeft(tokenInfo.waitMinutes);
-    const interval = setInterval(() => {
-      setQueueMinutesLeft((current) => {
-        if (current === null) return tokenInfo.waitMinutes;
-        if (current <= 1) {
-          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-            new Notification("Queue token update", {
-              body: `Your token ${tokenInfo.token} is nearly up. Please be ready for your counter/desk call.`,
-            });
-          }
-          return 0;
-        }
-        return current - 1;
-      });
-    }, 15000);
-
-    return () => clearInterval(interval);
-  }, [tokenInfo, isTokenFlow, bookedAppointmentId]);
-
-  async function enableNotifications() {
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      setMessage("This browser does not support push notifications.");
+    const session = getSession();
+    if (!session) {
+      router.replace(getLoginPathForCurrentPage());
       return;
     }
-    const permission = await Notification.requestPermission();
-    setNotificationsEnabled(permission === "granted");
-    if (permission === "granted") {
-      setMessage("Queue alerts enabled. You will be notified when your token is almost ready.");
-    }
-  }
+    setIsAuthenticated(session.user.role === "CUSTOMER");
+    setAuthorized(true);
+  }, [router]);
 
   useEffect(() => {
-    api.get(`/businesses/${params.slug}`).then(({ data }) => setBusiness(data));
-    api.get(`/reviews/business/${params.slug}`).then(({ data }) => setReviewSummary(data));
-  }, [params.slug]);
-
-  useEffect(() => {
-    if (!selectedService) return;
+    if (!authorized) return;
     let active = true;
+    setBusiness(null);
+    setBusinessLoadError(null);
+    api.get(`/businesses/${slug}`)
+      .then(({ data }) => {
+        if (active) setBusiness(data);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setBusinessLoadError(error?.response?.status === 404
+          ? "This business is no longer available. Please choose another service."
+          : "We couldn't load this business. Please try again.");
+      });
+    api.get(`/reviews/business/${slug}`)
+      .then(({ data }) => {
+        if (active) setReviewSummary(data);
+      })
+      .catch(() => {
+        if (active) setReviewSummary(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authorized, slug]);
+
+  useEffect(() => {
+    if (!business || selectedService) return;
+    const requestedService = new URLSearchParams(window.location.search).get("service");
+    if (requestedService && business.services.some((service) => service.id === requestedService)) {
+      setSelectedService(requestedService);
+    }
+  }, [business, selectedService]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("reschedule");
+    if (id) setRescheduleId(id);
+  }, []);
+
+  useEffect(() => {
+    if (!business || !selectedService || selectedDateStr) return;
+    const requestedDate = new URLSearchParams(window.location.search).get("date");
+    if (requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) setSelectedDateStr(requestedDate);
+  }, [business, selectedService, selectedDateStr]);
+
+  useEffect(() => {
+    if (!selectedService || !business) return;
+    let active = true;
+    setAvailabilityError(null);
+    setSlots([]);
+    setQueueDates([]);
+    if (isTokenFlow) {
+      api.get(`/businesses/${slug}/queue-dates`, { params: { daysAhead: 60 } })
+        .then(({ data }) => { if (active) setQueueDates(data.dates || []); })
+        .catch(() => { if (active) setAvailabilityError("Open queue dates could not be loaded. Please try again."); });
+      return () => { active = false; };
+    }
     const loadSlots = () => {
       api
         .get("/slots/availability", { params: { serviceId: selectedService } })
         .then(({ data }) => {
-          if (active) setSlots(data);
+          if (active) {
+            setSlots(data);
+            setAvailabilityError(null);
+          }
+        })
+        .catch(() => {
+          if (active) setAvailabilityError("Available times could not be loaded. Please refresh and try again.");
         });
     };
     loadSlots();
@@ -171,77 +197,99 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
       active = false;
       clearInterval(interval);
     };
-  }, [selectedService]);
+  }, [selectedService, business, isTokenFlow, slug]);
+
+  useEffect(() => {
+    if (!slots.length || selectedSlotId) return;
+    const requestedSlot = new URLSearchParams(window.location.search).get("slot");
+    if (requestedSlot && slots.some((slot) => slot.id === requestedSlot)) {
+      setSelectedSlotId(requestedSlot);
+    }
+  }, [slots, selectedSlotId]);
 
   useEffect(() => {
     if (!isTokenFlow || !selectedDateStr || bookedAppointmentId) {
       setTokenPreview(null);
       return;
     }
-    const date = new Date(selectedDateStr);
-    const dateParam = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    api.get(`/businesses/${params.slug}/token-preview`, { params: { date: dateParam } })
+    api.get(`/businesses/${slug}/token-preview`, { params: { date: selectedDateStr } })
       .then(({ data }) => setTokenPreview(data.nextTokenNumber))
       .catch(() => setTokenPreview(null));
-  }, [isTokenFlow, selectedDateStr, bookedAppointmentId, params.slug]);
+  }, [isTokenFlow, selectedDateStr, bookedAppointmentId, slug]);
 
-  // Map slots by Date string
+  // Group time slots by the business-local calendar day.
   const slotsByDateMap = useMemo(() => {
     const map = new Map<string, Slot[]>();
     for (const slot of slots) {
-      const key = new Date(slot.startTime).toDateString();
+      const key = businessDateKey(slot.startTime, business?.timezone || "Asia/Kolkata");
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(slot);
     }
     return map;
-  }, [slots]);
+  }, [slots, business?.timezone]);
 
   const availableDateKeys = useMemo(() => {
-    return Array.from(slotsByDateMap.keys()).sort(
-      (a, b) => new Date(a).getTime() - new Date(b).getTime()
-    );
-  }, [slotsByDateMap]);
-
-  useEffect(() => {
-    if (!slots.length) return;
-    const nextDate = availableDateKeys[0];
-    if (!selectedDateStr || !availableDateKeys.includes(selectedDateStr)) {
-      setSelectedDateStr(nextDate);
-    }
-  }, [slots, availableDateKeys, selectedDateStr]);
+    return isTokenFlow ? queueDates : Array.from(slotsByDateMap.keys()).sort();
+  }, [isTokenFlow, queueDates, slotsByDateMap]);
 
   const selectedDateSlots = useMemo(() => {
     if (!selectedDateStr) return [] as Slot[];
     return slotsByDateMap.get(selectedDateStr) || [];
   }, [selectedDateStr, slotsByDateMap]);
 
-  function buildTokenInfo(selectedDateKey: string | null): TokenInfo | null {
-    if (!business?.category || !selectedDateKey) return null;
-    const isGovt = business.category.slug === "government-office";
-    const waitBase = SPECIALTY_WAIT_MINUTES[business.category.slug] ?? (isGovt ? 15 : 18);
-    const dateValue = new Date(selectedDateKey);
-    const queueBoost = ((dateValue.getDate() + business.name.length) % 7) * 2;
-    const waitMinutes = waitBase + queueBoost;
-    const tokenNumber = 102 + ((dateValue.getDate() * 7) % 25) + (business.name.length % 9);
-    const prefix = isGovt ? "GOV" : business.category.slug.slice(0, 3).toUpperCase();
-    return { token: `${prefix}-${String(tokenNumber).padStart(3, "0")}`, waitMinutes };
+  function requireCustomerSession(): boolean {
+    const session = getSession();
+    if (session?.user.role === "CUSTOMER") {
+      setIsAuthenticated(true);
+      return true;
+    }
+
+    if (!session) {
+      setMessage("Please log in to book this service.");
+      const resumeUrl = new URL(window.location.href);
+      if (selectedService) resumeUrl.searchParams.set("service", selectedService);
+      if (selectedDateStr) {
+        const date = new Date(selectedDateStr);
+        resumeUrl.searchParams.set("date", `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`);
+      }
+      if (selectedSlotId) resumeUrl.searchParams.set("slot", selectedSlotId);
+      router.push(`/login?redirect=${encodeURIComponent(`${resumeUrl.pathname}${resumeUrl.search}`)}`);
+      return false;
+    }
+
+    setMessage("Bookings require a customer account. Please sign out and log in with a customer account.");
+    return false;
   }
 
   // Token flow: auto-pick the first available slot for the selected date and book it.
   async function bookTokenForDate() {
     if (!selectedDateStr || !selectedService) return;
-    if (!getSession()) {
-      setMessage("Please log in to get your queue token.");
-      router.push(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
-      return;
+    if (!requireCustomerSession()) return;
+    setBooking("queue");
+    setMessage(null);
+    try {
+      const { data } = rescheduleId
+        ? await api.post(`/appointments/${rescheduleId}/reschedule`, { date: selectedDateStr })
+        : await api.post("/appointments/queue", {
+            serviceId: selectedService,
+            date: selectedDateStr,
+            notes: occasionNote || undefined,
+          });
+      setBookedAppointment(data);
+      setBookedAppointmentId(data.id);
+      setTokenInfo({ tokenNumber: data.tokenNumber, estimatedWaitMinutes: 0 });
+      setMessage(rescheduleId ? "Queue booking rescheduled. Your new token is confirmed." : "Queue booking confirmed. Arrive during the business hours shown for your selected date.");
+      try {
+        const queue = await api.get(`/user/queue/${data.id}`);
+        setTokenInfo({ tokenNumber: data.tokenNumber, estimatedWaitMinutes: queue.data.estimatedWaitMinutes || 0 });
+      } catch {
+        // The confirmed booking remains available on the customer dashboard.
+      }
+    } catch (error: any) {
+      setMessage(error?.response?.data?.error || "Could not book a queue token for that date.");
+    } finally {
+      setBooking(null);
     }
-
-    const dateSlots = slotsByDateMap.get(selectedDateStr) || [];
-    if (dateSlots.length === 0) {
-      setMessage("No queue slots available for this date. Please pick another date.");
-      return;
-    }
-    await book(dateSlots[0].id);
   }
 
   async function payNow() {
@@ -262,12 +310,22 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
     }
   }
 
-  async function book(slotId: string) {
-    if (!getSession()) {
-      setMessage("Please log in before confirming this appointment.");
-      router.push(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
-      return;
+  async function joinWaitlist() {
+    if (!selectedDateStr || !selectedService || !business || !requireCustomerSession()) return;
+    try {
+      await api.post("/waitlist", { businessId: business.id, serviceId: selectedService, preferredDate: selectedDateStr });
+      setWaitlistJoined(true);
+      setMessage("You’re on the waitlist. We’ll let you know if a time opens up.");
+    } catch (error: any) {
+      if (error?.response?.status === 409) {
+        setWaitlistJoined(true);
+        setMessage("You’re already on the waitlist for this date.");
+      } else setMessage(error?.response?.data?.error || "Could not join the waitlist.");
     }
+  }
+
+  async function book(slotId: string) {
+    if (!requireCustomerSession()) return;
 
     setBooking(slotId);
     setMessage(null);
@@ -275,21 +333,13 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
       const payload: { slotId: string; notes?: string } = { slotId };
       if (occasionNote) payload.notes = occasionNote;
 
-      const { data } = await api.post("/appointments", payload);
+      const { data } = rescheduleId
+        ? await api.post(`/appointments/${rescheduleId}/reschedule`, { newSlotId: slotId })
+        : await api.post("/appointments", payload);
       setBookedAppointment(data);
       setBookedAppointmentId(data.id);
-      if (isTokenFlow) {
-        const estimate = buildTokenInfo(selectedDateStr);
-        setTokenInfo({
-          token: data.tokenNumber
-            ? `TOKEN-${String(data.tokenNumber).padStart(3, "0")}`
-            : estimate?.token || "TOKEN-PENDING",
-          waitMinutes: estimate?.waitMinutes || 0,
-        });
-        const isGovt = business?.category?.slug === "government-office";
-        setMessage(
-          `Booked! Your token is ready. Check in at the ${isGovt ? "government office" : "clinic"} when check-in opens.`
-        );
+      if (rescheduleId) {
+        setMessage("Appointment rescheduled successfully.");
       } else if (isRestaurant) {
         setMessage("Table reserved successfully! Check your dashboard for reservation details.");
       } else {
@@ -300,7 +350,13 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
     } catch (err: any) {
       if (err?.response?.status === 401) {
         setMessage("Your session has expired. Please log in again before confirming this appointment.");
-        router.push(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
+        const resumeUrl = new URL(window.location.href);
+        if (selectedService) resumeUrl.searchParams.set("service", selectedService);
+        if (selectedDateStr) {
+          resumeUrl.searchParams.set("date", selectedDateStr);
+        }
+        if (selectedSlotId) resumeUrl.searchParams.set("slot", selectedSlotId);
+        router.push(`/login?redirect=${encodeURIComponent(`${resumeUrl.pathname}${resumeUrl.search}`)}`);
       } else {
         setMessage(err?.response?.data?.error || "That slot was just taken — pick another.");
       }
@@ -309,13 +365,28 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
     }
   }
 
+  if (!authorized) return null;
+
+  if (businessLoadError) {
+    return (
+      <div role="alert" className="mx-auto max-w-3xl px-4 py-16 text-center">
+        <p className="text-lg font-semibold text-white">Business unavailable</p>
+        <p className="mt-2 text-sm text-slate-400">{businessLoadError}</p>
+        <button onClick={() => router.push("/services")} className="mt-6 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-500">
+          Browse services
+        </button>
+      </div>
+    );
+  }
   if (!business) return <p className="p-6 text-slate-300">Loading…</p>;
 
   return (
     <div className="mx-auto max-w-5xl py-4 text-slate-100">
       {/* Header Info */}
-      <div className="flex items-start justify-between">
-        <div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-4">
+          <BusinessVisual name={business.name} slug={business.category?.slug || "service"} logoUrl={business.logoUrl} className="h-16 w-16 rounded-xl" />
+          <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-semibold text-white">{business.name}</h1>
             {isRestaurant && (
@@ -338,11 +409,11 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 font-medium text-blue-400 hover:text-blue-300 underline"
                 >
-                  <span>📍</span> View on Google Maps
+                  <AppIcon name="location" size={15} /> View on Google Maps
                 </a>
               ) : (
                 <>
-                  <span>📍 {[business.address, business.city, business.state].filter(Boolean).join(", ")}</span>
+                  <span className="inline-flex items-center gap-1"><AppIcon name="location" size={15} />{[business.address, business.city, business.state].filter(Boolean).join(", ")}</span>
                   {business.mapUrl && (
                     <a
                       href={business.mapUrl}
@@ -358,6 +429,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
             </div>
           )}
           {business.description && <p className="mt-1 text-sm text-slate-300">{business.description}</p>}
+          </div>
         </div>
         {reviewSummary && reviewSummary.count > 0 && (
           <button
@@ -400,6 +472,9 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                   key={s.id}
                   onClick={() => {
                     setSelectedService(s.id);
+                    setSelectedDateStr(null);
+                    setSlots([]);
+                    setQueueDates([]);
                     setMessage(null);
                     setSelectedSlotId(null);
                     setBookedAppointmentId(null);
@@ -413,7 +488,8 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                 >
                   <div className="font-medium text-gray-900">{s.name}</div>
                   <div className="mt-1 text-xs text-brand-700 font-medium">
-                    🎟️ {isRestaurant ? "Reservation Token" : "Token Booking Fee"}: ₹{s.tokenFee || "50"}
+                    <span>₹{s.price} · {s.durationMin} min</span>
+                    <span className="mt-1 block text-xs text-gray-500">Booking token: ₹{s.tokenFee || "50"}</span>
                   </div>
                 </button>
               ))}
@@ -482,37 +558,14 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
           ) : isTokenFlow ? (
             /* ─── TOKEN QUEUE FLOW: pick a date, get a token ─── */
             <div className="space-y-5">
-              <h2 className="text-base font-semibold text-slate-100">2. Pick a Date</h2>
-              {availableDateKeys.length === 0 ? (
-                <div className="rounded-xl border-2 border-dashed border-slate-700 bg-slate-900/70 p-8 text-center text-slate-300">
-                  <p className="text-2xl mb-2">😕</p>
-                  <p className="font-medium">No queue slots available right now.</p>
-                </div>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {availableDateKeys.map((dk) => {
-                    const d = new Date(dk);
-                    const isToday = new Date().toDateString() === dk;
-                    return (
-                      <button
-                        key={dk}
-                        onClick={() => { setSelectedDateStr(dk); setBookedAppointmentId(null); setTokenInfo(null); setMessage(null); }}
-                        className={`flex flex-col items-center rounded-xl border px-4 py-3 text-sm transition-all ${
-                          selectedDateStr === dk
-                            ? "border-brand-600 bg-brand-600 text-white shadow-md"
-                            : "bg-white text-gray-900 hover:border-brand-300 hover:bg-brand-50"
-                        }`}
-                      >
-                        <span className="text-xs font-medium uppercase opacity-80">
-                          {isToday ? "Today" : d.toLocaleDateString("en-IN", { weekday: "short" })}
-                        </span>
-                        <span className="text-lg font-bold leading-tight">{d.getDate()}</span>
-                        <span className="text-xs opacity-70">{d.toLocaleDateString("en-IN", { month: "short" })}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              <h2 className="text-base font-semibold text-slate-100">{rescheduleId ? "Choose a new date" : "2. Pick a Date"}</h2>
+              <CalendarGrid
+                availableDateKeys={availableDateKeys}
+                selectedDateStr={selectedDateStr}
+                onSelectDate={(date) => { setSelectedDateStr(date); setBookedAppointmentId(null); setTokenInfo(null); setWaitlistJoined(false); setMessage(null); }}
+              />
+              {availabilityError && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-950/30 p-4 text-sm text-red-200">{availabilityError}</p>}
+              {!availabilityError && !availableDateKeys.length && <p className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 text-sm text-amber-100">No queue dates are currently available. Please check back later.</p>}
 
               {selectedDateStr && !bookedAppointmentId && (
                 <div className="rounded-xl border border-brand-100 bg-white p-5 shadow-sm space-y-3">
@@ -520,9 +573,12 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wider text-brand-600">Queue Date</p>
                       <p className="text-lg font-bold text-gray-900">
-                        {new Date(selectedDateStr).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}
+                        {dateFromKey(selectedDateStr).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })}
                       </p>
-                      <p className="text-sm text-gray-500">Clinic hours: 9:00 AM – 6:00 PM</p>
+                      {(() => {
+                        const businessDay = business.businessHours.find((hours) => hours.dayOfWeek === weekdayFromKey(selectedDateStr));
+                        return <p className="text-sm text-gray-500">Business hours: {businessDay ? `${businessDay.startTime}–${businessDay.endTime}` : "Closed"} ({business.timezone})</p>;
+                      })()}
                       {tokenPreview !== null && (
                         <p className="mt-2 text-sm font-semibold text-brand-700">
                           Next token: TOKEN-{String(tokenPreview).padStart(3, "0")}
@@ -530,7 +586,7 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                       )}
                     </div>
                     <button
-                      disabled={!!booking}
+                      disabled={!!booking || !availableDateKeys.includes(selectedDateStr) || !!availabilityError}
                       onClick={bookTokenForDate}
                       className="rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white shadow hover:bg-brand-700 disabled:opacity-50 transition-colors"
                     >
@@ -538,6 +594,8 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                         ? "Getting Token…"
                         : !isAuthenticated
                         ? "Log in to Get Token"
+                        : !availableDateKeys.includes(selectedDateStr)
+                        ? "Choose an open date"
                         : "🎟️ Get Token"}
                     </button>
                   </div>
@@ -550,33 +608,22 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                     <span className="text-3xl">🎟️</span>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wider text-green-700">Your Queue Token</p>
-                      <p className="text-3xl font-extrabold text-green-900 tracking-wide">{tokenInfo.token}</p>
+                      <p className="text-3xl font-extrabold text-green-900 tracking-wide">Token #{tokenInfo.tokenNumber}</p>
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-sm text-gray-700 rounded-lg bg-white border px-4 py-3">
                     <span>Estimated wait</span>
-                    <span className="font-bold text-brand-700">
-                      {queueMinutesLeft === null ? tokenInfo.waitMinutes : queueMinutesLeft} mins
-                    </span>
+                    <span className="font-bold text-brand-700">{tokenInfo.estimatedWaitMinutes ? `About ${tokenInfo.estimatedWaitMinutes} mins` : "Updating…"}</span>
                   </div>
 
-                  {!notificationsEnabled && (
-                    <button
-                      onClick={enableNotifications}
-                      className="w-full rounded-lg border py-2 text-xs font-medium text-gray-600 hover:bg-gray-100"
-                    >
-                      🔔 Enable queue alerts
-                    </button>
-                  )}
-
                   <div className="flex flex-col items-end gap-1 pt-1">
-                    <p className="text-xs text-gray-500">Pay token booking fee online to confirm your spot.</p>
+                    <p className="text-xs text-gray-500">Your token is confirmed. The optional booking fee is refundable according to the attendance policy.</p>
                     <button
                       onClick={payNow}
                       disabled={paying}
                       className="rounded-xl border border-brand-600 bg-white px-5 py-2.5 text-sm font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-50 transition-colors"
                     >
-                      {paying ? "Processing…" : `💳 Pay Token Fee (₹${business.services.find(s => s.id === selectedService)?.tokenFee || "50"})`}
+                      {paying ? "Processing…" : `Pay booking fee (₹${business.services.find(s => s.id === selectedService)?.tokenFee || "50"})`}
                     </button>
                   </div>
                 </div>
@@ -598,7 +645,9 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                 }}
               />
 
-              {selectedDateStr && (
+              {availabilityError && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-950/30 p-4 text-sm text-red-200">{availabilityError}</p>}
+
+              {selectedDateStr && !availabilityError && (selectedDateSlots.length > 0 ? (
                 <TimeSlotMatrix
                   slots={selectedDateSlots}
                   selectedSlotId={selectedSlotId}
@@ -606,7 +655,14 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                   isTokenFlow={false}
                   isRestaurant={isRestaurant}
                 />
-              )}
+              ) : (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-4 text-sm text-amber-100">
+                  <p>No booking times are currently available for this date.</p>
+                  <button onClick={joinWaitlist} disabled={waitlistJoined} className="mt-3 rounded-lg bg-amber-500 px-4 py-2 font-semibold text-slate-950 disabled:opacity-60">
+                    {waitlistJoined ? "Joined waitlist" : "Notify me if a time opens"}
+                  </button>
+                </div>
+              ))}
 
               {selectedSlotId && (
                 <div className="rounded-xl border border-brand-200 bg-white p-5 shadow-md space-y-4">
@@ -644,19 +700,19 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                   <div className="mb-4">
                     <p className="text-xs font-bold uppercase tracking-wider text-brand-700">Booking confirmed</p>
                     <p className="mt-1 text-sm font-semibold text-gray-900">
-                      Your date and time are reserved. Complete payment to confirm your booking.
+                      {isTokenFlow ? "Your queue token is confirmed. Arrive during the business hours shown for your date." : "Your appointment is confirmed. The booking fee is optional; the full service price is paid at the business."}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <AddToCalendarDropdown
+                    {bookedAppointment?.slot?.startTime && <AddToCalendarDropdown
                       appointmentId={bookedAppointmentId}
                       serviceName={bookedAppointment?.service?.name || business.services.find(s => s.id === selectedService)?.name || "Appointment"}
                       businessName={bookedAppointment?.business?.name || business.name}
                       startTime={bookedAppointment?.slot?.startTime ? new Date(bookedAppointment.slot.startTime).toISOString() : new Date().toISOString()}
                       endTime={bookedAppointment?.slot?.endTime ? new Date(bookedAppointment.slot.endTime).toISOString() : undefined}
                       location={bookedAppointment?.business?.address || business.address}
-                    />
+                    />}
                   </div>
                   <div className="flex flex-col sm:items-end gap-1.5">
                     <button
@@ -664,10 +720,10 @@ export default function BookingPage({ params }: { params: { slug: string } }) {
                       disabled={paying}
                       className="rounded-xl border border-brand-600 bg-brand-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-brand-700 disabled:opacity-50 transition-colors"
                     >
-                      {paying ? "Processing…" : `💳 Pay Reservation Token (₹${business.services.find(s => s.id === selectedService)?.tokenFee || "50"})`}
+                      {paying ? "Processing…" : `Pay reservation token (₹${business.services.find(s => s.id === selectedService)?.tokenFee || "50"})`}
                     </button>
                     <p className="text-[11px] text-gray-500">
-                      90% refunded upon arrival & check-in verification.
+                      If you pay the booking fee, 90% is refunded after verified check-in.
                     </p>
                   </div>
                   </div>
@@ -708,7 +764,7 @@ function CalendarGrid({
   onSelectDate: (dateStr: string) => void;
 }) {
   const [currentMonth, setCurrentMonth] = useState(() => {
-    if (availableDateKeys.length > 0) return new Date(availableDateKeys[0]);
+    if (availableDateKeys.length > 0) return dateFromKey(availableDateKeys[0]);
     return new Date();
   });
 
@@ -716,6 +772,12 @@ function CalendarGrid({
 
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const lastBookableDate = new Date(today);
+  lastBookableDate.setDate(lastBookableDate.getDate() + 59);
+  const isBeforeCurrentMonth = year < today.getFullYear() || (year === today.getFullYear() && month <= today.getMonth());
+  const isAfterLastBookableMonth = year > lastBookableDate.getFullYear() || (year === lastBookableDate.getFullYear() && month >= lastBookableDate.getMonth());
 
   const monthTitle = currentMonth.toLocaleString("default", { month: "long", year: "numeric" });
 
@@ -740,14 +802,16 @@ function CalendarGrid({
           <button
             type="button"
             onClick={prevMonth}
-            className="rounded-lg border px-2.5 py-1 text-sm font-medium hover:bg-gray-50"
+            disabled={isBeforeCurrentMonth}
+            className="rounded-lg border px-2.5 py-1 text-sm font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             ←
           </button>
           <button
             type="button"
             onClick={nextMonth}
-            className="rounded-lg border px-2.5 py-1 text-sm font-medium hover:bg-gray-50"
+            disabled={isAfterLastBookableMonth}
+            className="rounded-lg border px-2.5 py-1 text-sm font-medium hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             →
           </button>
@@ -765,6 +829,8 @@ function CalendarGrid({
         <span>Sat</span>
       </div>
 
+      <p className="mb-3 text-xs text-gray-500">Choose an upcoming date. A blue dot marks dates with published time slots.</p>
+
       {/* Calendar Grid */}
       <div className="grid grid-cols-7 gap-1 text-center text-sm">
         {paddingDays.map((_, idx) => (
@@ -773,20 +839,24 @@ function CalendarGrid({
 
         {days.map((dayNum) => {
           const dateObj = new Date(year, month, dayNum);
-          const dateStr = dateObj.toDateString();
+          const dateStr = localDateKey(dateObj);
           const isAvailable = availableSet.has(dateStr);
           const isSelected = selectedDateStr === dateStr;
+          const isBookableDate = dateObj >= today && dateObj <= lastBookableDate;
 
           return (
             <button
               key={dayNum}
-              disabled={!isAvailable}
+              type="button"
+              disabled={!isBookableDate}
               onClick={() => onSelectDate(dateStr)}
               className={`relative flex h-10 flex-col items-center justify-center rounded-xl text-sm font-medium transition-all ${
                 isSelected
                   ? "bg-brand-600 text-white font-bold shadow-md scale-105"
                   : isAvailable
                   ? "bg-brand-50 text-brand-900 hover:bg-brand-100 hover:scale-105"
+                  : isBookableDate
+                  ? "text-gray-700 hover:bg-gray-100"
                   : "text-gray-300 cursor-not-allowed"
               }`}
             >

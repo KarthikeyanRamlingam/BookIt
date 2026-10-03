@@ -4,9 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, saveSession } from "@/lib/api";
+import { getPostAuthDestination, getRequestedRedirect } from "@/lib/authFlow";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const redirectPath = getRequestedRedirect();
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -30,7 +32,7 @@ export default function RegisterPage() {
         password: form.password,
       });
       saveSession(data.token, data.user);
-      router.push("/dashboard");
+      router.replace(getPostAuthDestination(data.user, redirectPath));
     } catch (err: any) {
       setError(err?.response?.data?.error || "Registration failed");
     } finally {
@@ -96,7 +98,7 @@ export default function RegisterPage() {
                 type="password"
                 required
                 autoComplete="new-password"
-                minLength={6}
+                minLength={8}
                 value={form.password}
                 onChange={(e) => update("password", e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-4 py-3 text-gray-900 placeholder-gray-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none transition-all"
@@ -131,7 +133,10 @@ export default function RegisterPage() {
 
           <p className="mt-6 text-center text-sm text-gray-600">
             Already have an account?{" "}
-            <Link href="/login" className="font-medium text-brand-600 hover:text-brand-700 hover:underline">
+            <Link
+              href={redirectPath ? `/login?redirect=${encodeURIComponent(redirectPath)}` : "/login"}
+              className="font-medium text-brand-600 hover:text-brand-700 hover:underline"
+            >
               Sign in
             </Link>
           </p>

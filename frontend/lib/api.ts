@@ -2,15 +2,7 @@ import axios from "axios";
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api",
-});
-
-// Attach the JWT (stored client-side after login) to every request.
-api.interceptors.request.use((config) => {
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("token");
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
+  withCredentials: true,
 });
 
 api.interceptors.response.use(
@@ -18,10 +10,12 @@ api.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       if (typeof window !== "undefined") {
-        clearSession();
         const path = window.location.pathname;
-        if (!path.startsWith("/login") && !path.startsWith("/register")) {
-          window.location.href = "/login";
+        const publicAuthPage = path === "/login" || path === "/register" || path === "/business/register";
+        if (!publicAuthPage) {
+          clearSession();
+          const returnPath = `${path}${window.location.search}${window.location.hash}`;
+          window.location.href = `/login?redirect=${encodeURIComponent(returnPath)}`;
         }
       }
     }
@@ -43,6 +37,7 @@ export interface Service {
   name: string;
   durationMin: number;
   price: string;
+  tokenFee?: string;
   active: boolean;
 }
 
@@ -96,20 +91,32 @@ export interface Category {
   _count?: { businesses: number };
 }
 
-export function saveSession(token: string, user: AuthUser) {
-  localStorage.setItem("token", token);
+export function saveSession(_token: string | undefined, user: AuthUser) {
   localStorage.setItem("user", JSON.stringify(user));
+  window.dispatchEvent(new Event("auth-change"));
 }
 
-export function getSession(): { token: string; user: AuthUser } | null {
+export function getSession(): { user: AuthUser } | null {
   if (typeof window === "undefined") return null;
-  const token = localStorage.getItem("token");
   const userStr = localStorage.getItem("user");
-  if (!token || !userStr) return null;
-  return { token, user: JSON.parse(userStr) };
+  if (!userStr) return null;
+  try {
+    return { user: JSON.parse(userStr) };
+  } catch {
+    clearSession();
+    return null;
+  }
 }
 
 export function clearSession() {
-  localStorage.removeItem("token");
   localStorage.removeItem("user");
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("auth-change"));
+}
+
+export async function logoutSession() {
+  try {
+    await api.post("/auth/logout");
+  } finally {
+    clearSession();
+  }
 }

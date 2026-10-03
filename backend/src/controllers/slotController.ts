@@ -4,23 +4,8 @@ import { BusinessHours } from "@prisma/client";
 import { DateTime } from "luxon";
 import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
-
-const TOKEN_CATEGORY_SLUGS = new Set([
-  "doctor-appointment",
-  "government-office",
-  "general-practitioners",
-  "cardiologists",
-  "pediatricians",
-  "dermatologists",
-  "neurologists",
-  "endocrinologists",
-  "gastroenterologists",
-  "psychiatrists",
-  "orthopedics",
-  "dentists",
-  "ophthalmologists",
-  "gynecologists",
-]);
+import { usesTokenQueue } from "../domain/bookingRules";
+import { notify } from "../services/notificationService";
 
 const generateSchema = z.object({
   staffId: z.string().uuid(),
@@ -35,14 +20,27 @@ export async function generateSlots(req: Request, res: Response) {
   if (!business) throw new ApiError(404, "You don't own a business");
 
   const [staff, service, hours, settings] = await Promise.all([
-    prisma.staffProfile.findFirst({ where: { id: staffId, businessId: business.id } }),
-    prisma.service.findFirst({ where: { id: serviceId, businessId: business.id } }),
+    prisma.staffProfile.findFirst({ where: { id: staffId, businessId: business.id, active: true } }),
+    prisma.service.findFirst({ where: { id: serviceId, businessId: business.id }, include: { business: { include: { category: true } } } }),
     prisma.businessHours.findMany({ where: { businessId: business.id } }),
     prisma.businessSettings.findUnique({ where: { businessId: business.id } }),
   ]);
   if (!staff) throw new ApiError(404, "Staff member not found");
   if (!service) throw new ApiError(404, "Service not found");
+  if (service.business.category?.bookingMode === "QUEUE") {
+    throw new ApiError(400, "Queue services use business hours and do not need generated appointment slots.");
+  }
   if (hours.length === 0) throw new ApiError(400, "Set business hours before generating slots");
+
+  await prisma.slot.deleteMany({
+    where: {
+      staffId,
+      serviceId,
+      startTime: { gte: new Date() },
+      isBooked: false,
+      appointments: { none: {} },
+    },
+  });
 
   const hoursByDay = new Map<number, BusinessHours>(hours.map((h) => [h.dayOfWeek, h]));
   const slotsToCreate: { staffId: string; serviceId: string; startTime: Date; endTime: Date }[] = [];
@@ -90,9 +88,32 @@ export async function generateSlots(req: Request, res: Response) {
     }
   }
 
-  // skipDuplicates relies on the @@unique([staffId, startTime]) constraint,
-  // which is also our last line of defense against double-booking.
+  // This unique key prevents regenerating a duplicate slot for one service,
+  // while allowing different services to share the same candidate start time.
   const result = await prisma.slot.createMany({ data: slotsToCreate, skipDuplicates: true });
+  if (result.count > 0) {
+    const availableDates = [...new Set(slotsToCreate.map((slot) => DateTime.fromJSDate(slot.startTime).setZone(business.timezone).toISODate()).filter((date): date is string => Boolean(date)))];
+    for (const date of availableDates) {
+      const preferredDate = new Date(`${date}T00:00:00.000Z`);
+      const entries = await prisma.waitlistEntry.findMany({
+        where: { serviceId, businessId: business.id, preferredDate, notified: false },
+        include: { customer: true },
+      });
+      for (const entry of entries) {
+        try {
+          await notify({
+            userId: entry.customerId,
+            to: entry.customer.email,
+            subject: `Appointments opened — ${service.name}`,
+            message: `Appointments for ${service.name} at ${business.name} are now available on ${date}. Choose a time before it is taken: ${process.env.FRONTEND_URL}/book/${business.slug}?service=${serviceId}&date=${date}`,
+          });
+          await prisma.waitlistEntry.update({ where: { id: entry.id }, data: { notified: true } });
+        } catch (error) {
+          console.error(`Waitlist notification failed (entry=${entry.id}):`, error);
+        }
+      }
+    }
+  }
   res.status(201).json({ createdCount: result.count });
 }
 
@@ -109,7 +130,7 @@ export async function getAvailability(req: Request, res: Response) {
     include: { business: { include: { category: true } } },
   });
   if (!service) throw new ApiError(404, "Service not found");
-  const tokenFlow = TOKEN_CATEGORY_SLUGS.has(service.business.category?.slug || "");
+  const tokenFlow = usesTokenQueue(service.business.category?.bookingMode);
 
   const slots = await prisma.slot.findMany({
     where: {
@@ -122,8 +143,24 @@ export async function getAvailability(req: Request, res: Response) {
     },
     include: { staff: { include: { user: { select: { name: true } } } } },
     orderBy: { startTime: "asc" },
-    take: 200,
+    take: 1000,
   });
 
-  res.json(slots);
+  const firstStart = slots[0]?.startTime;
+  const lastEnd = slots.reduce<Date | undefined>((latest, slot) =>
+    !latest || slot.endTime > latest ? slot.endTime : latest, undefined);
+  if (firstStart && lastEnd && !tokenFlow) {
+    const conflicts = await prisma.appointment.findMany({
+      where: {
+        status: { in: ["PENDING", "CONFIRMED", "CHECK_IN_PENDING", "CHECKED_IN"] },
+        slot: { startTime: { lt: lastEnd }, endTime: { gt: firstStart } },
+      },
+      select: { slotId: true },
+    });
+    const occupiedSlotIds = new Set(conflicts.map((appointment) => appointment.slotId).filter((id): id is string => !!id));
+    const availableSlots = slots.filter((slot) => !occupiedSlotIds.has(slot.id));
+    return res.json(availableSlots.slice(0, 200));
+  }
+
+  res.json(slots.slice(0, 200));
 }

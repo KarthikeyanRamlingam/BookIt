@@ -9,10 +9,11 @@ interface Service {
   description?: string | null;
   durationMin: number;
   price: string | number;
+  tokenFee: string | number;
   active: boolean;
 }
 
-const emptyForm = { name: "", description: "", durationMin: 30, price: "" };
+const emptyForm = { name: "", description: "", durationMin: 30, price: "", tokenFee: "50" };
 
 export default function ServicesPage() {
   const [services, setServices] = useState<Service[]>([]);
@@ -56,6 +57,7 @@ export default function ServicesPage() {
       description: s.description || "",
       durationMin: s.durationMin,
       price: String(s.price),
+      tokenFee: String(s.tokenFee),
     });
     setFormError(null);
     setShowForm(true);
@@ -77,6 +79,7 @@ export default function ServicesPage() {
         description: form.description || undefined,
         durationMin: Number(form.durationMin),
         price: Number(form.price),
+        tokenFee: Number(form.tokenFee),
       };
       if (editingId) {
         await api.put(`/services/${editingId}`, payload);
@@ -157,6 +160,19 @@ export default function ServicesPage() {
                   className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Online booking fee (₹) *</label>
+                <input
+                  type="number"
+                  required
+                  min={50}
+                  step="0.01"
+                  value={form.tokenFee}
+                  onChange={(e) => setForm((f) => ({ ...f, tokenFee: e.target.value }))}
+                  className="mt-1 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <p className="mt-1 text-xs text-gray-400">Stripe requires at least ₹50 for INR payments.</p>
+              </div>
               <div className="col-span-2">
                 <label className="block text-sm font-medium text-gray-700">Description</label>
                 <textarea
@@ -227,6 +243,7 @@ export default function ServicesPage() {
                 <div className="mt-1 flex items-center gap-3 text-xs text-gray-400">
                   <span>⏱ {s.durationMin} min</span>
                   <span>💰 ₹{Number(s.price).toFixed(2)}</span>
+                  <span>Online fee ₹{Number(s.tokenFee).toFixed(2)}</span>
                 </div>
               </div>
               {s.active && (

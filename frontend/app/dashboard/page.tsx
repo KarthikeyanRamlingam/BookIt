@@ -12,8 +12,10 @@ interface Appointment {
   id: string;
   tokenNumber?: number | null;
   status: string;
+  serviceId: string;
   service: { name: string; price: string };
-  slot: { startTime: string; endTime?: string };
+  slot?: { startTime: string; endTime?: string } | null;
+  tokenDate?: string | null;
   business?: {
     name: string;
     address?: string;
@@ -21,9 +23,11 @@ interface Appointment {
     state?: string;
     country?: string;
     mapUrl?: string;
-    category?: { slug: string };
+    slug?: string;
+    timezone?: string;
+    category?: { slug: string; bookingMode?: "APPOINTMENT" | "QUEUE" };
   };
-  staff?: { user: { name: string } };
+  staff?: { user: { name: string } } | null;
   customer?: { name: string; email: string };
   payment?: {
     status: string;
@@ -36,6 +40,7 @@ interface Appointment {
 }
 
 interface DashboardStats {
+  businessStatus?: "PENDING_VERIFICATION" | "ACTIVE" | "SUSPENDED" | "REJECTED";
   today: { total: number; checkedIn: number; attended: number; noShow: number; cancelled: number };
   upcoming: number;
   pendingCheckIns: number;
@@ -46,8 +51,8 @@ interface LiveQueueAppointment {
   tokenNumber: number | null;
   customer: { name: string };
   service: { name: string; durationMin: number };
-  staff: { user: { name: string } };
-  slot: { startTime: string; endTime: string };
+  staff?: { user: { name: string } } | null;
+  slot?: { startTime: string; endTime: string } | null;
   checkedInAt: string;
   queuePosition?: number;
 }
@@ -69,6 +74,16 @@ interface MyLiveQueue {
   myQueueNumber: number | null;
   peopleAhead: number;
   waitingCount: number;
+  estimatedWaitMinutes?: number;
+}
+
+interface WaitlistEntry {
+  id: string;
+  preferredDate: string;
+  notified: boolean;
+  serviceId: string;
+  service: { name: string };
+  business: { name: string; slug: string };
 }
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; dot: string }> = {
@@ -135,6 +150,7 @@ export default function DashboardPage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [liveQueue, setLiveQueue] = useState<LiveQueue | null>(null);
   const [myLiveQueue, setMyLiveQueue] = useState<MyLiveQueue | null>(null);
+  const [waitlistEntries, setWaitlistEntries] = useState<WaitlistEntry[]>([]);
 
   function showToast(msg: string, type: "success" | "error" = "success") {
     setToast({ msg, type });
@@ -144,9 +160,13 @@ export default function DashboardPage() {
   const loadData = useCallback(async (role: string) => {
     try {
       if (role === "CUSTOMER") {
-        const { data } = await api.get("/appointments/mine");
-        setAppointments(data);
-      } else {
+        const [appointmentsResponse, waitlistResponse] = await Promise.all([
+          api.get("/appointments/mine"),
+          api.get("/waitlist/mine"),
+        ]);
+        setAppointments(appointmentsResponse.data);
+        setWaitlistEntries(waitlistResponse.data);
+      } else if (role === "ADMIN" || role === "STAFF") {
         const [apptRes, statsRes] = await Promise.all([
           api.get("/business/appointments"),
           api.get("/business/dashboard"),
@@ -164,6 +184,10 @@ export default function DashboardPage() {
   useEffect(() => {
     const session = getSession();
     if (!session) { router.push("/login"); return; }
+    if (session.user.role === "PLATFORM_ADMIN") {
+      router.replace("/dashboard/admin");
+      return;
+    }
     setUser(session.user);
     loadData(session.user.role);
     if (searchParams.get("registered") === "1") {
@@ -206,7 +230,7 @@ export default function DashboardPage() {
     if (!user || user.role !== "CUSTOMER") return;
     const activeAppointment = appointments.find((appointment) =>
       ["CONFIRMED", "CHECK_IN_PENDING", "CHECKED_IN"].includes(appointment.status) &&
-      ["government-office", "doctor-appointment", "general-practitioners", "cardiologists", "pediatricians", "dermatologists", "neurologists", "endocrinologists", "gastroenterologists", "psychiatrists", "orthopedics", "dentists", "ophthalmologists", "gynecologists"].includes(appointment.business?.category?.slug || "")
+      appointment.business?.category?.bookingMode === "QUEUE"
     );
     if (!activeAppointment) {
       setMyLiveQueue(null);
@@ -233,11 +257,26 @@ export default function DashboardPage() {
 
   async function cancel(id: string) {
     try {
-      await api.post(`/appointments/${id}/cancel`);
+      const { data } = await api.post(`/appointments/${id}/cancel`);
       setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status: "CANCELLED" } : a)));
-      showToast("Appointment cancelled.");
+      const refundStatus = data?.refund?.refundStatus;
+      showToast(refundStatus === "REFUNDED_CANCELLATION"
+        ? "Booking cancelled. Your refund has been processed."
+        : refundStatus?.startsWith("REFUND_PENDING")
+          ? "Booking cancelled. Your refund is processing."
+          : "Booking cancelled.");
     } catch (err: any) {
       showToast(err?.response?.data?.error || "Could not cancel appointment", "error");
+    }
+  }
+
+  async function leaveWaitlist(id: string) {
+    try {
+      await api.delete(`/waitlist/${id}`);
+      setWaitlistEntries((entries) => entries.filter((entry) => entry.id !== id));
+      showToast("Removed from the waitlist.");
+    } catch (err: any) {
+      showToast(err?.response?.data?.error || "Could not leave the waitlist.", "error");
     }
   }
 
@@ -289,6 +328,7 @@ export default function DashboardPage() {
   const isAdmin = user.role === "ADMIN" || user.role === "STAFF";
   const upcoming = appointments.filter((a) => !["CANCELLED", "COMPLETED", "ATTENDED", "NO_SHOW"].includes(a.status));
   const past = appointments.filter((a) => ["CANCELLED", "COMPLETED", "ATTENDED", "NO_SHOW"].includes(a.status));
+  const bookedTokens = upcoming.filter((appointment) => appointment.tokenNumber !== null && appointment.tokenNumber !== undefined);
 
   return (
     <div className="min-h-full max-w-5xl mx-auto space-y-8">
@@ -306,10 +346,10 @@ export default function DashboardPage() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-extrabold text-white tracking-tight">
-            {isAdmin ? "Business Dashboard" : "My Appointments"}
+            {isAdmin ? "Business Dashboard" : `Welcome, ${user.name.split(" ")[0]}`}
           </h1>
           <p className="mt-1 text-sm text-slate-400">
-            {isAdmin ? "Manage live appointments and verify customer check-ins" : "View your upcoming schedules, scan check-in QR codes, and sync calendars"}
+            {isAdmin ? "Manage live appointments and verify customer check-ins" : "Your appointments, queue tokens and booking updates in one place."}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -325,13 +365,102 @@ export default function DashboardPage() {
                   Enable reminders
                 </button>
               )}
-              <Link href="/" className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/30 hover:bg-blue-500 transition-colors">
-                ＋ Book Appointment
+              <Link href="/services" className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/30 hover:bg-blue-500 transition-colors">
+                ＋ Book appointment
               </Link>
             </div>
           )}
         </div>
       </div>
+
+      {user.role === "CUSTOMER" && (
+        <section className="space-y-5">
+          <div className="relative overflow-hidden rounded-3xl border border-blue-500/20 bg-gradient-to-br from-blue-950 via-slate-900 to-indigo-950 p-6 shadow-xl sm:p-8">
+            <div className="absolute -right-12 -top-16 h-56 w-56 rounded-full bg-blue-500/10 blur-3xl" />
+            <div className="relative flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
+              <div className="max-w-xl">
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-300">Your BookIt dashboard</p>
+                <h2 className="mt-2 text-2xl font-bold text-white sm:text-3xl">Your next appointment, all in one place</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-300">Track upcoming bookings and live queue tokens, or find a service that works for you.</p>
+              </div>
+            </div>
+          </div>
+
+          {!loading && (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <CustomerSummaryCard label="Upcoming bookings" value={upcoming.length} detail="Appointments still ahead" />
+              <CustomerSummaryCard label="Booked tokens" value={bookedTokens.length} detail="Queue bookings with a token number" />
+              <CustomerSummaryCard label="Completed visits" value={past.filter((appointment) => ["COMPLETED", "ATTENDED"].includes(appointment.status)).length} detail="Your recent service history" />
+            </div>
+          )}
+
+          {!loading && (
+            <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:p-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-white">Your booked tokens</h2>
+                  <p className="mt-1 text-sm text-slate-400">Queue bookings and their current status.</p>
+                </div>
+                <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-300">{bookedTokens.length}</span>
+              </div>
+              {bookedTokens.length ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {bookedTokens.map((appointment) => (
+                    <article key={appointment.id} className="flex items-center gap-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-xl text-blue-300" aria-hidden="true">#</div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-white">Token #{appointment.tokenNumber}</p>
+                        <p className="truncate text-sm text-slate-300">{appointment.service.name} · {appointment.business?.name || "Business"}</p>
+                        <p className="mt-1 text-xs text-slate-500">{appointment.slot?.startTime ? new Date(appointment.slot.startTime).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : appointment.tokenDate ? new Date(`${appointment.tokenDate}T12:00:00`).toLocaleDateString([], { dateStyle: "medium" }) : "Date to be confirmed"}</p>
+                      </div>
+                      <StatusBadge status={appointment.status} />
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-700 px-4 py-6 text-center">
+                  <p className="text-sm font-medium text-slate-300">No queue tokens booked yet</p>
+                  <p className="mt-1 text-xs text-slate-500">When you book a token-based service, it will appear here.</p>
+                </div>
+              )}
+            </section>
+          )}
+
+          {!loading && waitlistEntries.length > 0 && (
+            <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:p-6">
+              <h2 className="text-lg font-bold text-white">Your waitlists</h2>
+              <div className="mt-4 space-y-3">
+                {waitlistEntries.map((entry) => (
+                  <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                    <div>
+                      <p className="font-semibold text-white">{entry.service.name} · {entry.business.name}</p>
+                      <p className="mt-1 text-xs text-slate-400">{new Date(entry.preferredDate).toLocaleDateString([], { dateStyle: "medium", timeZone: "UTC" })}{entry.notified ? " · Slot update sent" : " · Waiting for an opening"}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {entry.notified && <Link href={`/book/${entry.business.slug}?service=${entry.serviceId}&date=${new Date(entry.preferredDate).toISOString().slice(0, 10)}`} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500">View service</Link>}
+                      <button onClick={() => leaveWaitlist(entry.id)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800">Leave waitlist</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </section>
+      )}
+
+      {user.role === "ADMIN" && stats && stats.businessStatus !== "ACTIVE" && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4 text-amber-100 sm:p-5">
+          <p className="font-semibold">
+            {stats.businessStatus === "REJECTED" ? "Business listing was not approved" : stats.businessStatus === "SUSPENDED" ? "Business listing is suspended" : "Business listing is awaiting approval"}
+          </p>
+          <p className="mt-1 text-sm text-amber-200/80">
+            {stats.businessStatus === "PENDING_VERIFICATION"
+              ? "Generating services and slots prepares your schedule, but customers can discover the business after a platform administrator approves it."
+              : "Contact the platform administrator to review your listing status."}
+          </p>
+          <Link href="/dashboard/business" className="mt-3 inline-flex text-sm font-semibold text-amber-200 underline underline-offset-4 hover:text-white">Review business profile</Link>
+        </div>
+      )}
 
       {/* Admin Stat Cards */}
       {isAdmin && stats && (
@@ -470,7 +599,7 @@ function LiveQueuePanel({ queue }: { queue: LiveQueue | null }) {
             <p className="text-xs font-bold uppercase tracking-widest text-emerald-400">Now serving</p>
             <p className="mt-2 text-3xl font-black text-white">Token #{queue.current.tokenNumber}</p>
             <p className="mt-1 text-sm text-emerald-200">{queue.current.service.name}</p>
-            <p className="mt-3 text-xs text-emerald-300/70">Staff: {queue.current.staff.user.name}</p>
+            {queue.current.staff?.user?.name && <p className="mt-3 text-xs text-emerald-300/70">Staff: {queue.current.staff.user.name}</p>}
           </div>
           <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-5">
             <div className="flex items-center justify-between">
@@ -530,6 +659,10 @@ function MyLiveQueuePanel({ queue }: { queue: MyLiveQueue }) {
             <p className="mt-1 text-3xl font-black text-white">{queue.peopleAhead}</p>
           </div>
           <div className="rounded-xl bg-slate-800/70 p-4">
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Estimated wait</p>
+            <p className="mt-2 truncate text-sm font-bold text-white">{queue.estimatedWaitMinutes ?? 0} min</p>
+          </div>
+          <div className="rounded-xl bg-slate-800/70 p-4">
             <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Now serving</p>
             <p className="mt-2 truncate text-sm font-bold text-white">
               {queue.currentTokenNumber ? `Token #${queue.currentTokenNumber}` : "No one"}
@@ -548,6 +681,12 @@ function getDirectionsUrl(business?: Appointment["business"]): string {
   }
   const queryParts = [business?.name, business?.address, business?.city, business?.state].filter(Boolean);
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(queryParts.join(", ") || "Business Location")}`;
+}
+
+function businessDateKey(instant: string, timezone = "Asia/Kolkata") {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(instant));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function AppointmentCard({
@@ -571,11 +710,11 @@ function AppointmentCard({
   onSubmitReview: (id: string, rating: number, comment: string) => Promise<void>;
   isPast?: boolean;
 }) {
-  const dt = new Date(a.slot.startTime);
-  const mon = dt.toLocaleDateString([], { month: "short" });
-  const day = dt.getDate();
-  const dateStr = dt.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-  const timeStr = dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dt = a.slot?.startTime ? new Date(a.slot.startTime) : a.tokenDate ? new Date(`${a.tokenDate}T12:00:00`) : null;
+  const mon = dt?.toLocaleDateString([], { month: "short" }) || "TBD";
+  const day = dt?.getDate() || "—";
+  const dateStr = dt?.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) || "Date to be confirmed";
+  const timeStr = a.slot?.startTime ? dt?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
 
   const showActions = a.status !== "CANCELLED";
   const directionsUrl = getDirectionsUrl(a.business);
@@ -592,6 +731,11 @@ function AppointmentCard({
           <div>
             <h3 className="text-lg font-bold text-white capitalize">{a.service.name}</h3>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-sm text-slate-400">
+              {a.tokenNumber !== null && a.tokenNumber !== undefined && (
+                <span className="flex items-center gap-1 font-semibold text-blue-300">
+                  <span aria-hidden="true">#</span> Token {a.tokenNumber}
+                </span>
+              )}
               {a.business?.name && (
                 <span className="flex items-center gap-1 text-slate-300">
                   <span>🏢</span> {a.business.name}
@@ -611,7 +755,7 @@ function AppointmentCard({
                 </span>
               )}
               <span className="flex items-center gap-1 font-medium text-blue-300">
-                <span>🕐</span> {dateStr} at {timeStr}
+                <span>🕐</span> {dateStr}{timeStr ? ` at ${timeStr}` : " · arrive during business hours"}
               </span>
             </div>
           </div>
@@ -671,14 +815,14 @@ function AppointmentCard({
             <span>Get Directions</span>
           </a>
 
-          <AddToCalendarDropdown
+          {a.slot?.startTime && <AddToCalendarDropdown
             appointmentId={a.id}
             serviceName={a.service.name}
             businessName={a.business?.name}
             startTime={new Date(a.slot.startTime).toISOString()}
             endTime={a.slot.endTime ? new Date(a.slot.endTime).toISOString() : undefined}
             location={a.business?.address}
-          />
+          />}
 
           {(a.status === "ATTENDED" || a.status === "COMPLETED") && !a.review && (
             <button
@@ -697,6 +841,9 @@ function AppointmentCard({
 
           <div className="flex-1" />
 
+          {a.status === "CONFIRMED" && (
+            a.business?.slug && <Link href={`/book/${a.business.slug}?service=${encodeURIComponent(a.serviceId)}&date=${a.tokenDate || (a.slot?.startTime ? businessDateKey(a.slot.startTime, a.business.timezone) : "")}&reschedule=${a.id}`} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-3.5 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800">↻ Reschedule</Link>
+          )}
           {a.status === "CONFIRMED" && (
             <button
               onClick={() => onCancel(a.id)}
@@ -732,22 +879,22 @@ function AdminList({
   return (
     <div className="space-y-3">
       {appointments.map((a) => {
-        const dt = new Date(a.slot.startTime);
+        const dt = a.slot?.startTime ? new Date(a.slot.startTime) : a.tokenDate ? new Date(`${a.tokenDate}T12:00:00`) : null;
         return (
           <div key={a.id} className="rounded-2xl border border-slate-800 bg-slate-900/90 shadow-md hover:border-slate-700 transition-all">
             <div className="flex items-center gap-5 px-6 py-4">
               <div className="flex-shrink-0 flex flex-col items-center justify-center rounded-xl bg-slate-800 border border-slate-700/80 w-12 h-12 text-center">
                 <span className="text-[10px] font-bold text-slate-400 uppercase leading-none">
-                  {dt.toLocaleDateString([], { month: "short" })}
+                  {dt?.toLocaleDateString([], { month: "short" }) || "TBD"}
                 </span>
-                <span className="text-lg font-black text-white leading-tight mt-0.5">{dt.getDate()}</span>
+                <span className="text-lg font-black text-white leading-tight mt-0.5">{dt?.getDate() || "—"}</span>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                   <span className="font-bold text-white capitalize">{a.service.name}</span>
                   {a.customer && <span className="text-sm text-slate-300">👤 {a.customer.name}</span>}
                   <span className="text-sm text-slate-400">
-                    🕐 {dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {dt.toLocaleDateString([], { month: "short", day: "numeric" })}
+                    🕐 {dt ? `${a.slot?.startTime ? dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " · " : ""}${dt.toLocaleDateString([], { month: "short", day: "numeric" })}` : "Date to be confirmed"}
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 mt-1.5">
@@ -788,12 +935,12 @@ function EmptyState({ isCustomer }: { isCustomer: boolean }) {
       <h3 className="text-xl font-bold text-white mb-1">No appointments yet</h3>
       <p className="text-sm text-slate-400 max-w-xs">
         {isCustomer
-          ? "Browse verified local services and schedule your next appointment in seconds."
+          ? "You’re all set. Choose a service to make your first booking."
           : "No appointments scheduled for your business yet."}
       </p>
       {isCustomer && (
-        <Link href="/" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/30 hover:bg-blue-500 transition-colors">
-          Browse Services →
+        <Link href="/services" className="mt-6 inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/30 hover:bg-blue-500 transition-colors">
+          Book services →
         </Link>
       )}
     </div>
@@ -813,6 +960,16 @@ function StatCard({ label, value, icon, color }: { label: string; value: number;
       <div className="text-2xl mb-3">{icon}</div>
       <p className="text-3xl font-black text-white">{value}</p>
       <p className="text-xs font-semibold mt-1 opacity-80 uppercase tracking-wider">{label}</p>
+    </div>
+  );
+}
+
+function CustomerSummaryCard({ label, value, detail }: { label: string; value: number; detail: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-sm sm:p-5">
+      <p className="text-2xl font-black text-white">{value}</p>
+      <p className="mt-1 text-sm font-semibold text-slate-200">{label}</p>
+      <p className="mt-1 text-xs text-slate-500">{detail}</p>
     </div>
   );
 }

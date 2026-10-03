@@ -3,6 +3,31 @@ import { z } from "zod";
 import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
 import { haversineKm } from "../utils/geo";
+import { DateTime } from "luxon";
+
+export async function getAvailableQueueDates(req: Request, res: Response) {
+  const daysAhead = Math.min(60, Math.max(1, Number(req.query.daysAhead) || 30));
+  const business = await prisma.business.findUnique({
+    where: { slug: req.params.slug, status: "ACTIVE" },
+    include: { category: true, businessHours: true },
+  });
+  if (!business) throw new ApiError(404, "Business not found");
+  if (business.category?.bookingMode !== "QUEUE") throw new ApiError(400, "This business uses appointment slots.");
+
+  const now = DateTime.now().setZone(business.timezone);
+  const hoursByDay = new Map(business.businessHours.map((item) => [item.dayOfWeek, item]));
+  const dates: string[] = [];
+  for (let offset = 0; offset < daysAhead; offset++) {
+    const day = now.startOf("day").plus({ days: offset });
+    const hours = hoursByDay.get(day.weekday % 7);
+    if (!hours) continue;
+    const [endHour, endMinute] = hours.endTime.split(":").map(Number);
+    if (day.set({ hour: endHour, minute: endMinute }).toMillis() <= now.toMillis()) continue;
+    const date = day.toISODate();
+    if (date) dates.push(date);
+  }
+  res.json({ timezone: business.timezone, dates });
+}
 
 export async function getBusinessBySlug(req: Request, res: Response) {
   const business = await prisma.business.findUnique({
@@ -83,10 +108,7 @@ export async function getMyBusiness(req: Request, res: Response) {
 
 import { MEDICAL_SPECIALTY_SLUGS } from "./categoryController";
 
-// Public: businesses in a category, optionally sorted by distance from a
-// given lat/lng (and optionally capped to a radius). If lat/lng aren't
-// provided, results come back unsorted by distance (alphabetical) so the
-// endpoint still works as a plain category browse.
+// Authenticated discovery: businesses in a category, optionally sorted by distance.
 export async function getNearbyBusinesses(req: Request, res: Response) {
   const { categoryId, lat, lng, radiusKm } = req.query;
   if (!categoryId) throw new ApiError(400, "categoryId is required");
@@ -104,7 +126,7 @@ export async function getNearbyBusinesses(req: Request, res: Response) {
         },
       },
     });
-    categoryIdFilter = { in: medicalCategories.map((c) => c.id) };
+    categoryIdFilter = { in: [String(categoryId), ...medicalCategories.map((c) => c.id)] };
   }
 
   const businesses = await prisma.business.findMany({

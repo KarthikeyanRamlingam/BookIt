@@ -1,25 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, saveSession } from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-interface Category {
-  id: string;
-  name: string;
-  slug: string;
-  icon: string | null;
-}
-
 const BUSINESS_TYPES = [
   { slug: "restaurant", label: "Restaurant", icon: "🍽️", desc: "Table bookings & dining reservations" },
   { slug: "doctor-appointment", label: "Doctor / Clinic", icon: "🩺", desc: "Medical appointments & consultations" },
   { slug: "salon", label: "Salon & Spa", icon: "💇", desc: "Hair styling, beauty treatments & wellness" },
   { slug: "government-office", label: "Government Office", icon: "🏛️", desc: "Document services & public sector" },
-  { slug: "other", label: "Other Business", icon: "🏢", desc: "Any other service-based business" },
 ];
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -40,11 +32,11 @@ export default function BusinessRegisterPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
 
   // Form state
   const [categorySlug, setCategorySlug] = useState("");
   const [businessName, setBusinessName] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
   const [description, setDescription] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
@@ -65,10 +57,6 @@ export default function BusinessRegisterPage() {
   const [gracePeriodMinutes, setGracePeriodMinutes] = useState(15);
   const [autoNoShow, setAutoNoShow] = useState(true);
 
-  useEffect(() => {
-    api.get("/categories").then(({ data }) => setCategories(data)).catch(() => {});
-  }, []);
-
   function toggleDay(d: number) {
     setWorkingDays((prev) =>
       prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)
@@ -85,7 +73,7 @@ export default function BusinessRegisterPage() {
     if (step === 3) {
       if (!ownerName.trim()) return "Owner name is required.";
       if (!email.trim() || !email.includes("@")) return "Valid email is required.";
-      if (password.length < 6) return "Password must be at least 6 characters.";
+      if (password.length < 8) return "Password must be at least 8 characters.";
       if (password !== confirmPassword) return "Passwords do not match.";
     }
     if (step === 4 && workingDays.length === 0) return "Select at least one working day.";
@@ -111,6 +99,7 @@ export default function BusinessRegisterPage() {
       const { data } = await api.post("/auth/register-business", {
         categorySlug,
         businessName,
+        logoUrl: logoUrl.trim() || undefined,
         description,
         address,
         city,
@@ -225,6 +214,10 @@ export default function BusinessRegisterPage() {
               <Field label="Business Name *" id="businessName">
                 <Input id="businessName" value={businessName} onChange={setBusinessName} placeholder="e.g. Bodycraft Salon, City Clinic" />
               </Field>
+              <Field label="Logo or cover image URL" id="logoUrl">
+                <Input id="logoUrl" type="url" value={logoUrl} onChange={setLogoUrl} placeholder="https://example.com/your-business-photo.jpg" />
+                <p className="mt-1 text-xs text-gray-500">Add a public image URL to show your business on customer booking cards. You can skip this and add it later.</p>
+              </Field>
               <Field label="Description" id="desc">
                 <textarea
                   id="desc"
@@ -287,7 +280,7 @@ export default function BusinessRegisterPage() {
                 <Input id="phone" value={phone} onChange={setPhone} placeholder="+91 98765 43210" />
               </Field>
               <Field label="Password *" id="password">
-                <Input id="password" type="password" value={password} onChange={setPassword} placeholder="Min. 6 characters" />
+                <Input id="password" type="password" value={password} onChange={setPassword} placeholder="Min. 8 characters" />
               </Field>
               <Field label="Confirm Password *" id="confirmPwd">
                 <Input id="confirmPwd" type="password" value={confirmPassword} onChange={setConfirmPassword} placeholder="Re-enter password" />

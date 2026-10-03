@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
+import { usesTokenQueue } from "../domain/bookingRules";
+import { DateTime } from "luxon";
 
 const initiateSchema = z.object({
   sessionToken: z.string().uuid("Invalid session token format"),
@@ -36,7 +38,7 @@ export async function initiateCheckIn(req: Request, res: Response) {
     where: { id: appointmentId },
     include: {
       slot: true,
-      business: { include: { settings: true, category: true } },
+      business: { include: { settings: true, category: true, businessHours: true } },
       service: true,
     },
   });
@@ -62,25 +64,26 @@ export async function initiateCheckIn(req: Request, res: Response) {
   const settings = appointment.business.settings;
   const checkInBeforeMs = (settings?.checkInBeforeMinutes ?? 30) * 60 * 1000;
   const gracePeriodMs = (settings?.gracePeriodMinutes ?? 15) * 60 * 1000;
-  const slotStart = appointment.slot.startTime;
-  const tokenFlow = [
-    "doctor-appointment",
-    "government-office",
-    "general-practitioners",
-    "cardiologists",
-    "pediatricians",
-    "dermatologists",
-    "neurologists",
-    "endocrinologists",
-    "gastroenterologists",
-    "psychiatrists",
-    "orthopedics",
-    "dentists",
-    "ophthalmologists",
-    "gynecologists",
-  ].includes(appointment.business.category?.slug || "");
-  const windowOpen = tokenFlow ? slotStart : new Date(slotStart.getTime() - checkInBeforeMs);
-  const windowClose = tokenFlow ? appointment.slot.endTime : new Date(slotStart.getTime() + gracePeriodMs);
+  const tokenFlow = usesTokenQueue(appointment.business.category?.bookingMode);
+  let windowOpen: Date;
+  let windowClose: Date;
+  let slotStart: Date | null;
+  if (tokenFlow) {
+    if (!appointment.tokenDate) throw new ApiError(409, "This queue booking is missing its service date.");
+    const businessDay = DateTime.fromISO(appointment.tokenDate, { zone: appointment.business.timezone });
+    const hours = appointment.business.businessHours.find((item) => item.dayOfWeek === businessDay.weekday % 7);
+    if (!hours) throw new ApiError(400, "The business is closed on this queue date.");
+    const [openHour, openMinute] = hours.startTime.split(":").map(Number);
+    const [closeHour, closeMinute] = hours.endTime.split(":").map(Number);
+    windowOpen = businessDay.set({ hour: openHour, minute: openMinute }).toJSDate();
+    windowClose = businessDay.set({ hour: closeHour, minute: closeMinute }).toJSDate();
+    slotStart = null;
+  } else {
+    if (!appointment.slot) throw new ApiError(409, "This appointment is missing its time slot.");
+    slotStart = appointment.slot.startTime;
+    windowOpen = new Date(slotStart.getTime() - checkInBeforeMs);
+    windowClose = new Date(slotStart.getTime() + gracePeriodMs);
+  }
 
   if (now < windowOpen) {
     const minutesUntil = Math.round((windowOpen.getTime() - now.getTime()) / 60000);
@@ -105,15 +108,19 @@ export async function initiateCheckIn(req: Request, res: Response) {
     if (existingCheckIn.status === "CONFIRMED") {
       throw new ApiError(409, "You have already been checked in.");
     }
-    if (existingCheckIn.status === "REJECTED") {
-      // Allow re-attempt if previously rejected — delete old record
-      await prisma.checkIn.delete({ where: { id: existingCheckIn.id } });
-    }
   }
 
   // 6. Create check-in record and update appointment status atomically
-  const [checkIn] = await prisma.$transaction([
-    prisma.checkIn.create({
+  const checkIn = await prisma.$transaction(async (tx) => {
+    if (existingCheckIn?.status === "REJECTED") {
+      await tx.checkIn.delete({ where: { id: existingCheckIn.id } });
+    }
+    const claim = await tx.appointment.updateMany({
+      where: { id: appointmentId, status: "CONFIRMED" },
+      data: { status: "CHECK_IN_PENDING" },
+    });
+    if (!claim.count) throw new ApiError(409, "Booking state changed; refresh and try again.");
+    return tx.checkIn.create({
       data: {
         bookingId: appointmentId,
         userId,
@@ -123,12 +130,8 @@ export async function initiateCheckIn(req: Request, res: Response) {
         method: "QR_SCAN",
         initiatedAt: now,
       },
-    }),
-    prisma.appointment.update({
-      where: { id: appointmentId },
-      data: { status: "CHECK_IN_PENDING" },
-    }),
-  ]);
+    });
+  });
 
   res.status(201).json({
     checkInId: checkIn.id,
@@ -136,7 +139,8 @@ export async function initiateCheckIn(req: Request, res: Response) {
     message: "Check-in initiated successfully. Waiting for business confirmation.",
     business: appointment.business.name,
     service: appointment.service.name,
-    slotTime: appointment.slot.startTime,
+    slotTime: slotStart,
+    queueDate: appointment.tokenDate,
   });
 }
 
@@ -174,7 +178,8 @@ export async function getCheckInStatus(req: Request, res: Response) {
         }
       : null,
     service: appointment.service.name,
-    slotTime: appointment.slot.startTime,
+      slotTime: appointment.slot?.startTime ?? null,
+      queueDate: appointment.tokenDate,
     businessName: appointment.business.name,
   });
 }
@@ -192,7 +197,7 @@ export async function getMyLiveQueue(req: Request, res: Response) {
       status: { in: ["CONFIRMED", "CHECK_IN_PENDING", "CHECKED_IN"] },
       tokenDate: appointment.tokenDate || "__unassigned__",
     },
-    select: { id: true, status: true, tokenNumber: true, service: { select: { name: true } } },
+    select: { id: true, status: true, tokenNumber: true, service: { select: { name: true, durationMin: true } } },
     orderBy: { tokenNumber: "asc" },
   });
   const position = queue.findIndex((item) => item.id === appointment.id);
@@ -207,7 +212,10 @@ export async function getMyLiveQueue(req: Request, res: Response) {
     currentTokenNumber: current?.tokenNumber || null,
     myTokenNumber: position >= 0 ? queue[position].tokenNumber : appointment.tokenNumber,
     myQueueNumber: position >= 0 ? position + 1 : null,
-    peopleAhead: position > 0 ? queue.slice(0, position).filter((item) => item.status === "CHECKED_IN").length : 0,
+    peopleAhead: position > 0 ? queue.slice(0, position).length : 0,
     waitingCount: queue.length,
+    estimatedWaitMinutes: position > 0
+      ? queue.slice(0, position).reduce((total, item) => total + item.service.durationMin, 0)
+      : 0,
   });
 }

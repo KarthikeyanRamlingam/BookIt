@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, getSession } from "@/lib/api";
+import { getLoginPathForCurrentPage } from "@/lib/authFlow";
 import { getCategoryIcon } from "@/lib/categoryIcons";
+import BusinessVisual from "@/components/BusinessVisual";
+import { AppIcon } from "@/components/AppIcon";
 
 interface Category {
   id: string;
@@ -17,6 +21,7 @@ interface Business {
   id: string;
   name: string;
   slug: string;
+  logoUrl: string | null;
   description: string | null;
   address: string | null;
   distanceKm: number | null;
@@ -39,6 +44,8 @@ const SPECIALTY_SLUGS = new Set([
 ]);
 
 export default function DoctorsPage() {
+  const router = useRouter();
+  const [authorized, setAuthorized] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [businesses, setBusinesses] = useState<Business[]>([]);
@@ -48,6 +55,15 @@ export default function DoctorsPage() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
+    if (!getSession()) {
+      router.replace(getLoginPathForCurrentPage());
+      return;
+    }
+    setAuthorized(true);
+  }, [router]);
+
+  useEffect(() => {
+    if (!authorized) return;
     api
       .get("/categories")
       .then(({ data }) => {
@@ -58,11 +74,11 @@ export default function DoctorsPage() {
           id: "all-doctors",
           name: "All Doctor Specialties",
           slug: "doctor-appointment",
-          icon: "🏥",
+          icon: null,
         };
         
         const list = [
-          { ...allOption, name: "All Doctor Specialties", icon: "🏥" },
+          { ...allOption, name: "All Doctor Specialties", icon: null },
           ...specialties,
         ];
         
@@ -72,10 +88,10 @@ export default function DoctorsPage() {
       .catch(() => {
         setErrorMessage("Backend not running. Start the API server at http://localhost:4000 before opening the doctor page.");
       });
-  }, []);
+  }, [authorized]);
 
   useEffect(() => {
-    if (!selectedCategory || locationStatus !== "done") return;
+    if (!authorized || !selectedCategory || locationStatus !== "done") return;
     setLoading(true);
     api
       .get("/businesses/nearby", {
@@ -90,7 +106,7 @@ export default function DoctorsPage() {
         setErrorMessage("The clinic list could not be loaded. Check that the backend is running on http://localhost:4000.");
       })
       .finally(() => setLoading(false));
-  }, [selectedCategory, locationStatus, coords]);
+  }, [authorized, selectedCategory, locationStatus, coords]);
 
   function useMyLocation() {
     if (!navigator.geolocation) {
@@ -114,6 +130,8 @@ export default function DoctorsPage() {
     setLocationStatus("done");
   }
 
+  if (!authorized) return null;
+
   return (
     <div className="mx-auto max-w-6xl py-8">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -121,7 +139,7 @@ export default function DoctorsPage() {
           <p className="text-sm font-medium uppercase tracking-[0.16em] text-brand-600">Doctor booking</p>
           <h1 className="text-3xl font-semibold text-gray-900">Choose a specialist</h1>
         </div>
-        <Link href="/" className="text-sm font-medium text-brand-700 hover:underline">
+        <Link href="/services" className="text-sm font-medium text-brand-700 hover:underline">
           ← Back to services
         </Link>
       </div>
@@ -191,11 +209,13 @@ export default function DoctorsPage() {
               className="block rounded-2xl border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md"
             >
               <div className="flex items-start justify-between gap-3">
-                <div>
+                <div className="flex min-w-0 items-start gap-3">
+                  <BusinessVisual name={business.name} slug="doctor-appointment" logoUrl={business.logoUrl} className="h-14 w-14 rounded-xl" />
+                  <div className="min-w-0">
                   <div className="text-lg font-semibold text-gray-900">{business.name}</div>
                   {business.address && (
                     <div className="mt-1 text-sm text-gray-400 flex items-center gap-1">
-                      <span>📍</span>
+                      <AppIcon name="location" size={14} />
                       <span className="truncate">
                         {business.address.startsWith("http") || business.address.includes("maps.google")
                           ? "Pinned Location (Google Maps)"
@@ -203,6 +223,7 @@ export default function DoctorsPage() {
                       </span>
                     </div>
                   )}
+                  </div>
                 </div>
                 {business.distanceKm !== null && (
                   <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600">
@@ -217,14 +238,14 @@ export default function DoctorsPage() {
                 <div className="mt-4 flex flex-wrap gap-2">
                   {business.services.map((service) => (
                     <span key={service.id} className="rounded-full bg-brand-50 px-2 py-1 text-xs text-brand-700">
-                      {service.name} · 🎟️ Token: ₹50
+                      {service.name} · ₹{service.price} · {service.durationMin} min
                     </span>
                   ))}
                 </div>
               )}
 
               <div className="mt-5 flex items-center justify-between border-t pt-3 text-sm">
-                <span className="text-gray-500">Token-based booking</span>
+                <span className="text-gray-500">Services and available times</span>
                 <span className="font-medium text-brand-700">Book now</span>
               </div>
             </Link>

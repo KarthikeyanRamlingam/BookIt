@@ -4,89 +4,88 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getSession, clearSession, AuthUser } from "@/lib/api";
+import { getSession, logoutSession, AuthUser } from "@/lib/api";
+import { getPostAuthDestination } from "@/lib/authFlow";
 
 export default function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
+  const isLoginPage = pathname === "/login";
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     function syncAuth() {
-      const session = getSession();
-      setUser(session ? session.user : null);
+      setUser(getSession()?.user ?? null);
     }
     syncAuth();
+    setMenuOpen(false);
     window.addEventListener("storage", syncAuth);
-    return () => window.removeEventListener("storage", syncAuth);
+    window.addEventListener("auth-change", syncAuth);
+    return () => {
+      window.removeEventListener("storage", syncAuth);
+      window.removeEventListener("auth-change", syncAuth);
+    };
   }, [pathname]);
 
-  function handleLogout() {
-    clearSession();
+  async function handleLogout() {
+    await logoutSession();
     setUser(null);
+    setMenuOpen(false);
     router.push("/login");
   }
 
   return (
-    <nav className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-2.5">
-        <Link href="/" className="flex items-center gap-3 group">
-          <div className="relative h-9 w-9 overflow-hidden rounded-xl bg-slate-900 border border-slate-700/80 shadow-md shadow-blue-600/20 group-hover:border-blue-500 transition-all flex items-center justify-center">
-            <Image
-              src="/logo.png"
-              alt="BookIt Logo"
-              width={36}
-              height={36}
-              className="object-contain"
-              priority
-            />
-          </div>
-          <span className="text-xl font-extrabold tracking-tight text-white group-hover:text-blue-400 transition-colors">
-            BookIt
-          </span>
-        </Link>
-        <div className="flex items-center gap-4 sm:gap-6 text-sm font-medium">
-          <Link href="/doctors" className="text-slate-300 hover:text-white transition-colors">
-            🩺 Doctors
-          </Link>
-          <Link href="/restaurants" className="text-slate-300 hover:text-white transition-colors">
-            🍽️ Restaurants
-          </Link>
-          <Link href="/salons" className="text-slate-300 hover:text-white transition-colors">
-            💇 Salons & Spa
-          </Link>
-          <Link href="/dashboard" className="text-slate-300 hover:text-white transition-colors">
-            Dashboard
+    <header className="sticky top-0 z-50 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-xl">
+      <nav aria-label="Main navigation" className="mx-auto max-w-7xl px-4 sm:px-6">
+        <div className="flex h-16 items-center justify-between">
+          <Link href="/" className="group flex items-center gap-2.5" aria-label="BookIt home">
+            <span className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-lg shadow-blue-600/10 transition group-hover:border-blue-500">
+              <Image src="/logo.png" alt="" width={36} height={36} className="object-contain" priority />
+            </span>
+            <span className="text-lg font-bold tracking-tight text-white">Book<span className="text-blue-400">It</span></span>
           </Link>
 
-          {user ? (
-            <div className="flex items-center gap-3">
-              <Link
-                href="/dashboard"
-                className="flex items-center gap-2 rounded-xl border border-slate-700/80 bg-slate-900/80 px-3 py-1 text-xs font-semibold text-slate-200 hover:border-blue-500 transition-all"
-              >
-                <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600 text-white font-bold text-[11px]">
-                  {user.name?.charAt(0).toUpperCase() || "U"}
-                </span>
-                <span className="hidden sm:inline max-w-[100px] truncate">{user.name}</span>
-              </Link>
-              <button
-                onClick={handleLogout}
-                className="rounded-xl border border-red-500/20 bg-red-950/20 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-950/40 hover:text-red-200 transition-all"
-              >
-                Log out
-              </button>
-            </div>
-          ) : (
-            <Link
-              href="/login"
-              className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-1.5 font-semibold text-white shadow-sm hover:border-slate-600 hover:bg-slate-800 transition-all"
-            >
-              Log in
-            </Link>
-          )}
+          <div className="hidden items-center gap-2 md:flex">
+            {user ? (
+              <>
+                <Link href={getPostAuthDestination(user)} className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-blue-500">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-blue-600 text-xs font-bold text-white">{user.name?.charAt(0).toUpperCase() || "U"}</span>
+                  <span className="max-w-32 truncate">{user.name}</span>
+                </Link>
+                <button onClick={handleLogout} className="rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition hover:bg-slate-900 hover:text-white">Log out</button>
+              </>
+            ) : (
+              !isLoginPage && <>
+                <Link href="/login" className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 hover:text-white">Log in</Link>
+                <Link href="/register" className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-500">Get started</Link>
+              </>
+            )}
+          </div>
+
+          {!(isLoginPage && !user) && <button type="button" aria-label="Toggle navigation menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 text-slate-200 md:hidden">
+            <span aria-hidden="true" className="text-xl">{menuOpen ? "×" : "☰"}</span>
+          </button>}
         </div>
-      </div>
-    </nav>
+
+        {menuOpen && !(isLoginPage && !user) && (
+          <div className="border-t border-slate-800 py-3 md:hidden">
+            <div className="grid gap-1">
+              {user && <Link href={getPostAuthDestination(user)} className="rounded-lg px-3 py-2.5 text-sm font-medium text-slate-300 hover:bg-slate-900 hover:text-white">Dashboard</Link>}
+            </div>
+            <div className="mt-3 flex gap-2 border-t border-slate-800 pt-3">
+              {user ? (
+                <button onClick={handleLogout} className="w-full rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-200">Log out</button>
+              ) : isLoginPage ? null : (
+                <>
+                  <Link href="/login" className="flex-1 rounded-xl border border-slate-700 px-4 py-2.5 text-center text-sm font-semibold text-slate-200">Log in</Link>
+                  <Link href="/register" className="flex-1 rounded-xl bg-blue-600 px-4 py-2.5 text-center text-sm font-semibold text-white">Get started</Link>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </nav>
+    </header>
   );
 }

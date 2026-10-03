@@ -1,0 +1,1 @@
+ALTER TABLE "StaffProfile" ADD COLUMN "active" BOOLEAN NOT NULL DEFAULT true;

@@ -32,6 +32,7 @@ async function run() {
   });
 
   for (const appointment of appointments) {
+    if (!appointment.slot) continue;
     for (const reminder of reminderOffsets) {
       const scheduledAt = new Date(appointment.slot.startTime.getTime() - reminder.minutes * 60 * 1000);
       await prisma.appointmentReminder.upsert({
@@ -58,13 +59,20 @@ async function run() {
 
   let sent = 0;
   for (const reminder of dueReminders) {
+    const appointment = reminder.appointment;
+    if (!appointment.slot || !appointment.staff) {
+      await prisma.appointmentReminder.update({
+        where: { id: reminder.id },
+        data: { status: "FAILED", attempts: 3, lastError: "This booking no longer has an appointment time." },
+      });
+      continue;
+    }
     const claim = await prisma.appointmentReminder.updateMany({
       where: { id: reminder.id, status: { in: ["PENDING", "FAILED"] } },
       data: { status: "PROCESSING", attempts: { increment: 1 }, lastError: null },
     });
     if (claim.count === 0) continue;
 
-    const appointment = reminder.appointment;
     const time = formatAppointmentTime(appointment.slot.startTime, appointment.business.timezone);
     const lead = reminder.type === "ONE_HOUR" ? "1 hour" : "30 minutes";
     const message = `Reminder: your ${appointment.service.name} appointment with ${appointment.staff.user.name} is in ${lead}, at ${time}.`;

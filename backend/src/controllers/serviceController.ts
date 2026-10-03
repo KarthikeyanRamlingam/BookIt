@@ -4,10 +4,11 @@ import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
 
 const serviceSchema = z.object({
-  name: z.string().min(2),
-  description: z.string().optional(),
-  durationMin: z.number().int().min(5),
-  price: z.number().nonnegative(),
+  name: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(1000).optional(),
+  durationMin: z.number().int().min(5).max(1440),
+  price: z.number().nonnegative().max(10_000_000),
+  tokenFee: z.number().min(50).max(10_000_000).optional(),
 });
 
 async function getOwnedBusinessId(userId: string) {

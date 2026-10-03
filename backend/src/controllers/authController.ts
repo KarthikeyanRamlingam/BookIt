@@ -6,20 +6,22 @@ import { OAuth2Client } from "google-auth-library";
 import { prisma } from "../config/db";
 import { signToken } from "../utils/jwt";
 import { ApiError } from "../middleware/errorHandler";
+import { clearAuthCookie, setAuthCookie } from "../utils/authCookie";
+import crypto from "crypto";
 
 type Tx = Prisma.TransactionClient;
 
 const googleOAuthClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const registerSchema = z.object({
-  name: z.string().min(2),
-  email: z.string().email(),
-  phone: z.string().min(7).optional(),
-  password: z.string().min(6),
+  name: z.string().trim().min(2).max(100),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  phone: z.string().trim().min(7).max(20).optional(),
+  password: z.string().min(8).max(128),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
   password: z.string().min(1),
 });
 
@@ -28,12 +30,13 @@ const googleAuthSchema = z.object({
 });
 
 const registerBusinessSchema = z.object({
-  ownerName: z.string().min(2),
-  email: z.string().email(),
-  phone: z.string().min(7).optional(),
-  password: z.string().min(6),
-  businessName: z.string().min(2),
+  ownerName: z.string().trim().min(2).max(100),
+  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  phone: z.string().trim().min(7).max(20).optional(),
+  password: z.string().min(8).max(128),
+  businessName: z.string().trim().min(2).max(150),
   categorySlug: z.string().min(2),
+  logoUrl: z.string().trim().url().max(2048).optional(),
   description: z.string().optional(),
   address: z.string().optional(),
   city: z.string().optional(),
@@ -79,8 +82,8 @@ export async function register(req: Request, res: Response) {
   });
 
   const token = signToken({ userId: user.id, role: user.role });
+  setAuthCookie(res, token);
   res.status(201).json({
-    token,
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
   });
 }
@@ -95,7 +98,8 @@ export async function login(req: Request, res: Response) {
       data: { name: "Platform Administrator", email: data.email, passwordHash, role: "PLATFORM_ADMIN" },
     });
     const token = signToken({ userId: admin.id, role: admin.role });
-    return res.json({ token, user: { id: admin.id, name: admin.name, email: admin.email, role: admin.role } });
+    setAuthCookie(res, token);
+    return res.json({ user: { id: admin.id, name: admin.name, email: admin.email, role: admin.role } });
   }
   if (!user) throw new ApiError(401, "Invalid email or password");
 
@@ -103,7 +107,8 @@ export async function login(req: Request, res: Response) {
   if (!valid) throw new ApiError(401, "Invalid email or password");
 
   const token = signToken({ userId: user.id, role: user.role });
-  res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  setAuthCookie(res, token);
+  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 }
 
 /**
@@ -137,7 +142,7 @@ export async function googleLogin(req: Request, res: Response) {
   let user = await prisma.user.findUnique({ where: { email } });
 
   if (!user) {
-    const randomPassword = Math.random().toString(36).slice(-16) + "Gx!#";
+    const randomPassword = crypto.randomBytes(32).toString("base64url");
     const passwordHash = await bcrypt.hash(randomPassword, 10);
     user = await prisma.user.create({
       data: {
@@ -150,8 +155,8 @@ export async function googleLogin(req: Request, res: Response) {
   }
 
   const token = signToken({ userId: user.id, role: user.role });
+  setAuthCookie(res, token);
   res.json({
-    token,
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
     isNewUser: false,
   });
@@ -173,6 +178,11 @@ export async function me(req: Request, res: Response) {
   });
   if (!user) throw new ApiError(404, "User not found");
   res.json(user);
+}
+
+export function logout(_req: Request, res: Response) {
+  clearAuthCookie(res);
+  res.status(204).send();
 }
 
 export async function registerBusiness(req: Request, res: Response) {
@@ -197,6 +207,7 @@ export async function registerBusiness(req: Request, res: Response) {
         slug,
         ownerId: owner.id,
         categoryId: category.id,
+        logoUrl: data.logoUrl,
         description: data.description,
         address: data.address,
         phone: data.businessPhone,
@@ -232,8 +243,8 @@ export async function registerBusiness(req: Request, res: Response) {
   });
 
   const token = signToken({ userId: result.owner.id, role: result.owner.role });
+  setAuthCookie(res, token);
   res.status(201).json({
-    token,
     user: { id: result.owner.id, name: result.owner.name, email: result.owner.email, role: result.owner.role },
     business: { id: result.business.id, name: result.business.name, slug: result.business.slug, status: result.business.status },
     message: "Business registered successfully. Pending verification by admin.",

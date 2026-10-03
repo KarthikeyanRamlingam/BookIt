@@ -14,7 +14,6 @@ import {
   rejectCheckIn,
   markAttended,
   getBusinessAppointments,
-  runNoShowSweep,
   getBusinessSettings,
   updateBusinessSettings,
 } from "../controllers/businessPortalController";
@@ -44,9 +43,6 @@ router.post("/checkins/:id/reject", rejectCheckIn);
 // Appointments (business portal view)
 router.get("/appointments", getBusinessAppointments);
 router.post("/appointments/:id/attended", markAttended);
-
-// No-show sweep (can be called by a cron job)
-router.post("/no-show-sweep", runNoShowSweep);
 
 // Business settings
 router.get("/settings", getBusinessSettings);

@@ -51,7 +51,7 @@ export async function listStaff(req: Request, res: Response) {
   if (!business) throw new ApiError(404, "You don't own a business");
 
   const staff = await prisma.staffProfile.findMany({
-    where: { businessId: business.id },
+    where: { businessId: business.id, active: true },
     include: { user: { select: { id: true, name: true, email: true } } },
   });
   res.json(staff);
@@ -66,6 +66,9 @@ export async function removeStaff(req: Request, res: Response) {
   });
   if (!staff) throw new ApiError(404, "Staff member not found");
 
-  await prisma.staffProfile.delete({ where: { id: staff.id } });
+  await prisma.$transaction([
+    prisma.staffProfile.update({ where: { id: staff.id }, data: { active: false } }),
+    prisma.user.update({ where: { id: staff.userId }, data: { role: "CUSTOMER" } }),
+  ]);
   res.json({ message: "Staff member removed" });
 }

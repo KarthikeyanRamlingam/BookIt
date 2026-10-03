@@ -14,7 +14,9 @@ interface CheckInRecord {
   booking: {
     id: string;
     service: { name: string; durationMin: number };
-    slot: { startTime: string; endTime: string };
+    slot?: { startTime: string; endTime: string } | null;
+    tokenDate?: string | null;
+    tokenNumber?: number | null;
   };
 }
 
@@ -253,7 +255,9 @@ export default function CheckInPage() {
                         <p className="font-semibold text-gray-900 text-sm">{c.user.name}</p>
                         <p className="text-xs text-gray-500">{c.booking.service.name}</p>
                         <p className="text-xs text-gray-500 mt-0.5">
-                          {new Date(c.booking.slot.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          {c.booking.slot?.startTime
+                            ? new Date(c.booking.slot.startTime).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                            : `Token #${c.booking.tokenNumber ?? "—"} · ${c.booking.tokenDate || "Queue"}`}
                           {" · "}
                           {new Date(c.initiatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} arrived
                         </p>

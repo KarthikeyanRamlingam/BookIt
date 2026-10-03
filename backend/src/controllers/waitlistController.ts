@@ -2,32 +2,46 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { prisma } from "../config/db";
 import { ApiError } from "../middleware/errorHandler";
+import { DateTime } from "luxon";
 
 const joinSchema = z.object({
   businessId: z.string().uuid(),
   serviceId: z.string().uuid(),
-  preferredDate: z.string(), // ISO date, e.g. "2026-07-20"
+  preferredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
 export async function joinWaitlist(req: Request, res: Response) {
   const data = joinSchema.parse(req.body);
-
   const service = await prisma.service.findFirst({
-    where: { id: data.serviceId, businessId: data.businessId, active: true },
+    where: { id: data.serviceId, businessId: data.businessId, active: true, business: { status: "ACTIVE" } },
+    include: { business: { select: { timezone: true } } },
   });
   if (!service) throw new ApiError(400, "Service does not belong to this business or is inactive");
 
+  const localDate = DateTime.fromISO(data.preferredDate, { zone: service.business.timezone });
+  const today = DateTime.now().setZone(service.business.timezone).toISODate();
+  if (!localDate.isValid || localDate.toISODate() !== data.preferredDate || data.preferredDate < (today || "")) {
+    throw new ApiError(400, "Preferred date must be valid and today or later in the business timezone");
+  }
+  const preferredDate = new Date(`${data.preferredDate}T00:00:00.000Z`);
+
   const existing = await prisma.waitlistEntry.findFirst({
-    where: { customerId: req.user!.userId, businessId: data.businessId, serviceId: data.serviceId, preferredDate: new Date(data.preferredDate) },
+    where: { customerId: req.user!.userId, businessId: data.businessId, serviceId: data.serviceId, preferredDate },
   });
-  if (existing) throw new ApiError(409, "You are already on this waitlist");
+  if (existing) {
+    if (existing.notified) {
+      const rejoined = await prisma.waitlistEntry.update({ where: { id: existing.id }, data: { notified: false } });
+      return res.status(200).json(rejoined);
+    }
+    throw new ApiError(409, "You are already on this waitlist");
+  }
 
   const entry = await prisma.waitlistEntry.create({
     data: {
       customerId: req.user!.userId,
       businessId: data.businessId,
       serviceId: data.serviceId,
-      preferredDate: new Date(data.preferredDate),
+      preferredDate,
     },
   });
 

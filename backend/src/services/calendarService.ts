@@ -1,3 +1,5 @@
+import { DateTime } from "luxon";
+
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -125,8 +127,21 @@ export function generateBusinessCalendarFeed(businessName: string, appointments:
   ];
 
   const events = appointments.map((appt) => {
-    const start = formatDateToICS(new Date(appt.slot.startTime));
-    const end = formatDateToICS(new Date(appt.slot.endTime));
+    let startDate: Date;
+    let endDate: Date;
+    if (appt.slot) {
+      startDate = new Date(appt.slot.startTime);
+      endDate = new Date(appt.slot.endTime);
+    } else {
+      const day = DateTime.fromISO(appt.tokenDate, { zone: appt.business?.timezone || "Asia/Kolkata" });
+      const hours = appt.business?.businessHours?.find((entry: any) => entry.dayOfWeek === day.weekday % 7);
+      const [openHour, openMinute] = (hours?.startTime || "09:00").split(":").map(Number);
+      const [closeHour, closeMinute] = (hours?.endTime || "17:00").split(":").map(Number);
+      startDate = day.set({ hour: openHour, minute: openMinute }).toJSDate();
+      endDate = day.set({ hour: closeHour, minute: closeMinute }).toJSDate();
+    }
+    const start = formatDateToICS(startDate);
+    const end = formatDateToICS(endDate);
     const uid = `bookit-${appt.id}@bookit.app`;
     const customerName = appt.customer?.name || "Customer";
     const serviceName = appt.service?.name || "Service";
@@ -140,7 +155,7 @@ export function generateBusinessCalendarFeed(businessName: string, appointments:
       `DTEND:${end}`,
       `SUMMARY:${escapeICS(`[${status}] ${customerName} - ${serviceName}`)}`,
       `DESCRIPTION:${escapeICS(
-        `Customer: ${customerName}\nService: ${serviceName}\nStatus: ${status}\nNotes: ${appt.notes || "None"}\nQR Code: ${appt.qrCode}`
+        `Customer: ${customerName}\nService: ${serviceName}\n${appt.tokenNumber ? `Queue token: #${appt.tokenNumber}\n` : ""}Status: ${status}\nNotes: ${appt.notes || "None"}\nQR Code: ${appt.qrCode}`
       )}`,
       appt.business?.address ? `LOCATION:${escapeICS(appt.business.address)}` : "",
       `STATUS:${status === "CANCELLED" ? "CANCELLED" : "CONFIRMED"}`,

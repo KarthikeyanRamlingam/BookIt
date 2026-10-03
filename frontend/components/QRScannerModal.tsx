@@ -77,7 +77,11 @@ export default function QRScannerModal({
 
       // Try haptic vibration if supported on mobile
       if (typeof window !== "undefined" && "vibrate" in navigator) {
-        try { navigator.vibrate([100, 50, 100]); } catch {}
+        try {
+          navigator.vibrate([100, 50, 100]);
+        } catch {
+          // Haptics are optional and may be blocked by browser policy.
+        }
       }
 
       setScanSuccessMsg("✓ Check-in Verified! Waiting for business confirmation…");

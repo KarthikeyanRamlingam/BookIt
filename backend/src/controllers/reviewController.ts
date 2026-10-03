@@ -24,8 +24,8 @@ export async function createReview(req: Request, res: Response) {
   });
   if (!appointment) throw new ApiError(404, "Appointment not found");
   if (appointment.customerId !== req.user!.userId) throw new ApiError(403, "Not your appointment");
-  if (appointment.status !== "COMPLETED") {
-    throw new ApiError(400, "You can only review a completed appointment");
+  if (!["COMPLETED", "ATTENDED"].includes(appointment.status)) {
+    throw new ApiError(400, "You can only review an attended appointment");
   }
   if (appointment.review) throw new ApiError(409, "You've already reviewed this appointment");
 

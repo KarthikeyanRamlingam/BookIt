@@ -5,7 +5,7 @@ import { requireRole } from "../middleware/role";
 
 const router = Router();
 
-router.get("/availability", getAvailability); // public
+router.get("/availability", requireAuth, getAvailability);
 router.post("/generate", requireAuth, requireRole("ADMIN"), generateSlots);
 
 export default router;

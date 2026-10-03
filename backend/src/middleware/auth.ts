@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { verifyToken, JwtPayload } from "../utils/jwt";
+import { prisma } from "../config/db";
+import { AUTH_COOKIE_NAME } from "../utils/authCookie";
 
 // Extend Express's Request type with our decoded JWT payload.
 declare global {
@@ -7,19 +9,28 @@ declare global {
   namespace Express {
     interface Request {
       user?: JwtPayload;
+      businessId?: string;
+      business?: import("@prisma/client").Business;
     }
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing or malformed Authorization header" });
-  }
-
-  const token = header.split(" ")[1];
+  const bearerToken = header?.startsWith("Bearer ") ? header.slice(7).trim() : undefined;
+  const cookieToken = req.headers.cookie
+    ?.split(";")
+    .map((cookie) => cookie.trim().split("="))
+    .find(([name]) => name === AUTH_COOKIE_NAME)?.[1];
+  const token = bearerToken || (cookieToken ? decodeURIComponent(cookieToken) : undefined);
+  if (!token) return res.status(401).json({ error: "Authentication required" });
   try {
-    req.user = verifyToken(token);
+    const payload = verifyToken(token);
+    const user = await prisma.user.findUnique({ where: { id: payload.userId }, select: { role: true } });
+    if (!user || user.role !== payload.role) {
+      return res.status(401).json({ error: "Session is no longer valid" });
+    }
+    req.user = payload;
     next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });

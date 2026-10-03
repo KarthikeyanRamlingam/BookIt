@@ -5,6 +5,7 @@ import {
   getMyBusiness,
   getNearbyBusinesses,
   getTokenPreview,
+  getAvailableQueueDates,
 } from "../controllers/businessController";
 import { requireAuth } from "../middleware/auth";
 import { requireRole } from "../middleware/role";
@@ -13,8 +14,9 @@ const router = Router();
 
 router.get("/mine", requireAuth, requireRole("ADMIN"), getMyBusiness);
 router.put("/hours", requireAuth, requireRole("ADMIN"), setBusinessHours);
-router.get("/nearby", getNearbyBusinesses); // public -- must be registered before "/:slug"
-router.get("/:slug/token-preview", getTokenPreview);
-router.get("/:slug", getBusinessBySlug); // public storefront lookup
+router.get("/nearby", requireAuth, getNearbyBusinesses); // must be registered before "/:slug"
+router.get("/:slug/queue-dates", requireAuth, getAvailableQueueDates);
+router.get("/:slug/token-preview", requireAuth, getTokenPreview);
+router.get("/:slug", requireAuth, getBusinessBySlug);
 
 export default router;

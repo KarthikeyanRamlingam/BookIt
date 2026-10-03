@@ -44,6 +44,10 @@ export function errorHandler(err: any, req: Request, res: Response, next: NextFu
     return res.status(400).json({ error: `Foreign key constraint failed on field: ${err.meta?.field_name || "relation"}` });
   }
 
+  if (err?.name === "PrismaClientInitializationError") {
+    return res.status(503).json({ error: "Database temporarily unavailable" });
+  }
+
   console.error("Unhandled server error:", err);
   const errorMessage = process.env.NODE_ENV === "production" ? "Internal server error" : (err?.message || "Internal server error");
   return res.status(500).json({ error: errorMessage });

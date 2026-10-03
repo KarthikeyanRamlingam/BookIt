@@ -45,22 +45,13 @@ Express/TypeScript + Prisma backend, PostgreSQL database.
 - **Frontend**: "Pay now" button + paid badge on the dashboard, "Join
   waitlist" prompt on the booking page when a service has no open slots.
 
-## What's stubbed in the schema but not yet wired up (next stages)
+## Production status
 
-1. **Reviews & ratings** — `Review` model ready; need a
-   "leave a review after COMPLETED appointment" endpoint + UI.
-2. **Loyalty points, coupons, referrals** — models ready; need point-award
-   logic on completed appointments, coupon validation at booking time, and
-   referral-code redemption on signup.
-3. **QR check-in UI** — backend endpoint exists (`POST /api/appointments/checkin/:qrCode`);
-   need a staff-facing scanner page and a QR image on the customer's
-   appointment view (the `qrcode` npm package is already in `package.json`).
-4. **Analytics dashboard** — aggregate queries (revenue, peak hours, booking
-   trends) over `Appointment`/`Payment`, charted on the admin dashboard.
-5. **A staff-side dashboard UI** for managing services/staff/business hours
-   (currently only reachable via the API directly — see "Try it" below).
-
-Say the word and I'll build any of these next, in order or out of order.
+Reviews, loyalty awards, coupon validation, QR check-in, live queues, business
+management, platform approval, and staff dashboards are implemented. See
+[`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) for the current
+architecture, completed hardening, deployment topology, and remaining release
+gates. Compilation alone is not treated as production readiness.
 
 ## Local setup
 
@@ -102,6 +93,8 @@ Put the generated keys in the backend `.env` as `VAPID_PUBLIC_KEY` and
 npm run reminders
 ```
 The job sends reminders at 1 hour and 30 minutes before confirmed appointments.
+
+For automatic no-show processing and pending refund retries, configure a single scheduled worker to call `POST /api/internal/no-show-sweep` hourly and `POST /api/internal/refunds/retry` every 5–15 minutes. Send the backend's `CRON_SECRET` in the `x-cron-secret` header. Do not expose these endpoints to the browser or run duplicate schedules.
 
 ### 5. Try it
 1. Go to `/register`, sign up as **business owner**, pick a slug (e.g. `glow-salon`).

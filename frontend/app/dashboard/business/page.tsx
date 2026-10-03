@@ -25,18 +25,21 @@ interface Business {
   id: string;
   name: string;
   slug: string;
+  logoUrl: string | null;
+  description: string | null;
+  address: string | null;
   services: Service[];
   staff: StaffMember[];
   businessHours: BusinessHour[];
 }
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const TABS = ["Hours", "Services", "Staff", "Generate Slots"] as const;
+const TABS = ["Profile", "Hours", "Services", "Staff", "Generate Slots"] as const;
 
 export default function BusinessAdminPage() {
   const router = useRouter();
   const [business, setBusiness] = useState<Business | null>(null);
-  const [tab, setTab] = useState<(typeof TABS)[number]>("Hours");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("Profile");
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -90,12 +93,46 @@ export default function BusinessAdminPage() {
       </div>
 
       <div className="mt-6">
+        {tab === "Profile" && <ProfileTab business={business} onSaved={loadBusiness} flash={flash} />}
         {tab === "Hours" && <HoursTab business={business} onSaved={loadBusiness} flash={flash} />}
         {tab === "Services" && <ServicesTab business={business} onChanged={loadBusiness} flash={flash} />}
         {tab === "Staff" && <StaffTab business={business} onChanged={loadBusiness} flash={flash} />}
         {tab === "Generate Slots" && <SlotsTab business={business} flash={flash} />}
       </div>
     </div>
+  );
+}
+
+function ProfileTab({ business, onSaved, flash }: { business: Business; onSaved: () => void; flash: (m: string) => void }) {
+  const [name, setName] = useState(business.name);
+  const [logoUrl, setLogoUrl] = useState(business.logoUrl || "");
+  const [description, setDescription] = useState(business.description || "");
+  const [address, setAddress] = useState(business.address || "");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api.patch("/business/me", { name, logoUrl: logoUrl.trim() || null, description, address });
+      flash("Business profile updated");
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="max-w-2xl rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:p-7">
+      <h2 className="text-lg font-semibold text-gray-900">Customer-facing profile</h2>
+      <p className="mt-1 text-sm text-gray-500">These details appear on your discovery card and booking page.</p>
+      <div className="mt-5 space-y-4">
+        <label className="block text-sm font-medium text-gray-700">Business name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5 font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></label>
+        <label className="block text-sm font-medium text-gray-700">Logo or cover image URL<input type="url" value={logoUrl} onChange={(event) => setLogoUrl(event.target.value)} placeholder="https://example.com/business-photo.jpg" className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5 font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /><span className="mt-1 block text-xs font-normal text-gray-500">Use a public image link. Leave it empty to show the category icon.</span></label>
+        <label className="block text-sm font-medium text-gray-700">Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5 font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></label>
+        <label className="block text-sm font-medium text-gray-700">Address<input value={address} onChange={(event) => setAddress(event.target.value)} className="mt-1.5 w-full rounded-lg border border-gray-300 px-3 py-2.5 font-normal outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" /></label>
+        <button onClick={save} disabled={saving || name.trim().length < 2} className="rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{saving ? "Saving…" : "Save profile"}</button>
+      </div>
+    </section>
   );
 }
 
